@@ -48,8 +48,12 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=sha,format=long,prefix=
+            type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
+
+      - name: Show image tags
+        run: |
+          printf '%s\n' '${{ steps.meta.outputs.tags }}'
 
       - name: Build and push
         uses: docker/build-push-action@v6
