@@ -66,21 +66,34 @@ async function loadFileBrowser(path = null) {
   const target = path || selectedPath || (settings && settings.scan_directories[0]) || "";
   const query = target ? `?path=${encodeURIComponent(target)}` : "";
   browserState = await request(`/files${query}`);
+  if (browserState.warning) {
+    selectedPath = browserState.path;
+    $("sourcePath").value = browserState.path;
+    $("jobName").value = browserState.path.split("/").filter(Boolean).pop() || "";
+    $("title").textContent = "已选择";
+    $("meta").textContent = browserState.path;
+    $("taskSummary").textContent = "待分析";
+  }
   $("browserPath").value = browserState.path;
   renderFileBrowser();
+  if (browserState.warning) {
+    setStatus(browserState.warning, "warning");
+  }
 }
 
 function renderFileBrowser() {
   $("parentDirBtn").disabled = !browserState.parent;
+  $("browserSummary").textContent = `${browserState.entries.length} 项`;
   const rows = browserState.entries
     .map((entry) => {
       const icon = entry.type === "directory" ? "▸" : entry.is_video ? "♪" : "·";
       const selectable = entry.selectable ? "" : "disabled";
       const typeLabel = entry.type === "directory" ? "文件夹" : entry.is_video ? "视频" : "文件";
+      const title = entry.type === "directory" ? "单击选择，双击进入文件夹" : "单击选择";
       return `
-        <div class="browser-row ${selectedPath === entry.path ? "active" : ""} ${entry.selectable ? "" : "muted-row"}" data-path="${escapeAttr(entry.path)}" data-type="${entry.type}" data-selectable="${entry.selectable}">
+        <div class="browser-row ${selectedPath === entry.path ? "active" : ""} ${entry.selectable ? "" : "muted-row"}" data-path="${escapeAttr(entry.path)}" data-type="${entry.type}" data-selectable="${entry.selectable}" tabindex="${entry.selectable ? "0" : "-1"}" title="${escapeAttr(title)}">
           <button class="icon-button open-entry" title="${entry.type === "directory" ? "打开文件夹" : "选择文件"}">${icon}</button>
-          <button class="text-button select-entry" ${selectable}>
+          <button class="text-button select-entry" tabindex="-1" ${selectable}>
             <span class="truncate">${escapeHtml(entry.name)}</span>
             <small>${typeLabel}${entry.reason ? " · " + escapeHtml(entry.reason) : ""}</small>
           </button>
@@ -90,26 +103,46 @@ function renderFileBrowser() {
     })
     .join("");
   $("fileBrowser").innerHTML = rows || '<div class="empty-state">这个目录是空的</div>';
-  document.querySelectorAll(".open-entry").forEach((button) => {
-    button.addEventListener("click", () => {
-      const row = button.closest(".browser-row");
-      const path = row.dataset.path;
-      if (row.dataset.type === "directory") loadFileBrowser(path);
-      else choosePath(path);
+  document.querySelectorAll(".browser-row").forEach((row) => {
+    row.addEventListener("click", () => handleBrowserRowClick(row));
+    row.addEventListener("dblclick", () => handleBrowserRowOpen(row));
+    row.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        handleBrowserRowOpen(row);
+      } else if (event.key === " ") {
+        event.preventDefault();
+        handleBrowserRowClick(row);
+      }
+    });
+    row.querySelector(".open-entry").addEventListener("click", (event) => {
+      event.stopPropagation();
+      handleBrowserRowOpen(row);
     });
   });
-  document.querySelectorAll(".select-entry").forEach((button) => {
-    button.addEventListener("click", () => {
-      const row = button.closest(".browser-row");
-      choosePath(row.dataset.path);
-    });
-  });
+}
+
+function handleBrowserRowClick(row) {
+  if (row.dataset.selectable !== "true") return;
+  choosePath(row.dataset.path);
+}
+
+function handleBrowserRowOpen(row) {
+  if (row.dataset.selectable !== "true") return;
+  const path = row.dataset.path;
+  if (row.dataset.type === "directory") {
+    loadFileBrowser(path).catch((error) => setStatus(error.message, "error"));
+  } else {
+    choosePath(path);
+  }
 }
 
 function choosePath(path) {
   selectedPath = path;
   $("sourcePath").value = path;
   $("jobName").value = path.split("/").filter(Boolean).pop() || "";
+  $("title").textContent = "已选择";
+  $("meta").textContent = path;
+  $("taskSummary").textContent = "待分析";
   renderFileBrowser();
   setStatus("已选择: " + path);
 }
@@ -228,6 +261,7 @@ function syncTaskControlsFromSelection() {
     .map((track) => `<option value="${track.index}">${escapeHtml(track.label)}</option>`)
     .join("");
   $("jobName").value = selected.name;
+  $("taskSummary").textContent = `${selected.episode_count} 个视频`;
   renderAccelerationHint();
 }
 
@@ -286,7 +320,7 @@ async function detectSource() {
 
 async function previewSelected() {
   try {
-    if (!selected || !selected.video_files.length) throw new Error("请先探测源路径并选择合集");
+    if (!selected || !selected.video_files.length) throw new Error("请先分析选中项并选择合集");
     const video = selected.video_files[0];
     const track = Number($("trackIndex").value);
     const start = Number($("trimStart").value || 0);
@@ -302,7 +336,7 @@ async function previewSelected() {
 
 async function extractSelected() {
   try {
-    if (!selected) throw new Error("请先探测源路径并选择合集");
+    if (!selected) throw new Error("请先分析选中项并选择合集");
     setStatus("任务已创建，后台开始提取...");
     const job = await request("/extract", {
       method: "POST",

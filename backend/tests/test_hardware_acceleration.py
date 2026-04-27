@@ -14,3 +14,7 @@ def test_explicit_acceleration_builds_ffmpeg_args():
         "-hwaccel_device",
         "/dev/dri/renderD128",
     ]
+
+
+def test_rockchip_mpp_is_codec_based_not_global_hwaccel():
+    assert ffmpeg_acceleration_args("rkmpp") == []

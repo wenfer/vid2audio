@@ -1,0 +1,19 @@
+version: "3.8"
+
+services:
+  vid2audio:
+    # Intel iGPU / VAAPI / QSV for common NAS systems.
+    #
+    # Requirements on the host:
+    # - /dev/dri exists
+    # - the container user can access render/video devices
+    # - FFmpeg in the image reports vaapi and/or qsv in:
+    #   docker compose exec vid2audio ffmpeg -hide_banner -hwaccels
+    devices:
+      - /dev/dri:/dev/dri
+    environment:
+      - VID2AUDIO_HWACCEL=auto
+      # Most Linux NAS systems expose the render node here. Leave empty if it
+      # differs or if you want FFmpeg to decide.
+      - VID2AUDIO_HWACCEL_DEVICE=/dev/dri/renderD128
+      - VID2AUDIO_HWACCEL_FALLBACK=true

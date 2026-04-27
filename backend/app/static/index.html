@@ -4,14 +4,20 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vid2Audio</title>
-    <link rel="stylesheet" href="/static/styles.css" />
+    <link rel="stylesheet" href="/static/styles.css?v=3" />
   </head>
   <body>
     <div class="app">
-      <aside class="sidebar">
-        <div class="brand">Vid2Audio</div>
-        <button id="refreshFilesBtn" class="primary">刷新文件</button>
+      <header class="app-header">
+        <div>
+          <div class="brand">Vid2Audio</div>
+          <p>音频任务工作台</p>
+        </div>
         <div id="status" class="status"></div>
+        <button id="settingsBtn">全局配置</button>
+      </header>
+      <aside class="sidebar">
+        <button id="refreshFilesBtn" class="primary">刷新文件</button>
         <h2 class="nav-title">已分析</h2>
         <nav id="collections" class="collections"></nav>
         <h2 class="nav-title">任务</h2>
@@ -21,9 +27,8 @@
         <section class="toolbar">
           <div>
             <h1 id="title">等待扫描</h1>
-            <p id="meta">从文件浏览器选择一个视频文件或文件夹来创建音频提取任务。</p>
+            <p id="meta">未选择文件</p>
           </div>
-          <button id="settingsBtn">全局配置</button>
         </section>
 
         <section id="settingsPanel" class="panel hidden">
@@ -56,6 +61,7 @@
                 <option value="qsv">Intel QSV</option>
                 <option value="vaapi">VAAPI</option>
                 <option value="cuda">NVIDIA CUDA</option>
+                <option value="rkmpp">Rockchip MPP</option>
                 <option value="videotoolbox">Apple VideoToolbox</option>
               </select>
             </label>
@@ -88,6 +94,10 @@
         </section>
 
         <section id="browserPanel" class="panel">
+          <div class="section-heading">
+            <h2>文件浏览器</h2>
+            <span id="browserSummary"></span>
+          </div>
           <div class="browser-toolbar">
             <button id="parentDirBtn">上一级</button>
             <input id="browserPath" />
@@ -97,6 +107,10 @@
         </section>
 
         <section id="taskPanel" class="panel">
+          <div class="section-heading">
+            <h2>提取设置</h2>
+            <span id="taskSummary"></span>
+          </div>
           <div class="grid compact-grid">
             <label class="wide-field">
               选中的文件夹或视频
@@ -119,6 +133,7 @@
                 <option value="qsv">Intel QSV</option>
                 <option value="vaapi">VAAPI</option>
                 <option value="cuda">NVIDIA CUDA</option>
+                <option value="rkmpp">Rockchip MPP</option>
                 <option value="videotoolbox">Apple VideoToolbox</option>
               </select>
             </label>
@@ -173,6 +188,6 @@
         </section>
       </main>
     </div>
-    <script src="/static/app.js"></script>
+    <script src="/static/app.js?v=3"></script>
   </body>
 </html>

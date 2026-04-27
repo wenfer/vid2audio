@@ -2,6 +2,7 @@ version: "3.8"
 
 services:
   vid2audio:
+    image: ghcr.io/wenfer/vid2audio:latest
     build:
       context: ..
       dockerfile: docker/Dockerfile
@@ -17,3 +18,11 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
+      - VID2AUDIO_DB=/app/data/vid2audio.db
+      - VID2AUDIO_INPUT=/app/input
+      - VID2AUDIO_OUTPUT=/app/output
+      # Keep the container portable by default. The app's "auto" mode will
+      # use CPU unless a hardware acceleration override exposes a device.
+      - VID2AUDIO_HWACCEL=auto
+      - VID2AUDIO_HWACCEL_DEVICE=
+      - VID2AUDIO_HWACCEL_FALLBACK=true

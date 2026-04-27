@@ -47,6 +47,10 @@ def detect_hardware_acceleration() -> dict[str, object]:
         value = line.strip()
         if value and not value.lower().startswith("hardware"):
             supported.append(value)
+    decoder_result = subprocess.run(["ffmpeg", "-hide_banner", "-decoders"], capture_output=True, text=True, check=False)
+    if "rkmpp" in decoder_result.stdout.lower():
+        supported.append("rkmpp")
+    supported = sorted(set(supported), key=supported.index)
     preferred = _preferred_acceleration(supported)
     return {
         "available": bool(supported),
@@ -67,6 +71,11 @@ def ffmpeg_acceleration_args(mode: str, device: str = "") -> list[str]:
         return args
     if normalized in {"qsv", "cuda", "videotoolbox", "dxva2", "d3d11va"}:
         return ["-hwaccel", normalized]
+    if normalized == "rkmpp":
+        # Rockchip MPP is exposed through codec-specific FFmpeg decoders such
+        # as h264_rkmpp/hevc_rkmpp, not a generic -hwaccel flag. Vid2Audio
+        # currently maps audio streams only, so no video decoder is forced.
+        return []
     return []
 
 
@@ -76,14 +85,14 @@ def resolve_hardware_acceleration(mode: str | None) -> str:
         return normalized
     detected = detect_hardware_acceleration()
     recommended = str(detected.get("recommended") or "safe").lower()
-    if recommended in {"qsv", "vaapi", "cuda", "videotoolbox", "dxva2", "d3d11va"}:
+    if recommended in {"qsv", "vaapi", "cuda", "videotoolbox", "dxva2", "d3d11va", "rkmpp"}:
         return recommended
     return "safe"
 
 
 def _preferred_acceleration(supported: list[str]) -> str:
     lowered = {item.lower() for item in supported}
-    for candidate in ["qsv", "vaapi", "cuda", "videotoolbox"]:
+    for candidate in ["qsv", "vaapi", "cuda", "rkmpp", "videotoolbox"]:
         if candidate in lowered:
             return candidate
     return "safe"
@@ -94,6 +103,11 @@ def _acceleration_note(preferred: str, supported: list[str]) -> str:
         return "当前 FFmpeg 未报告硬件加速后端。自动模式会使用 CPU 路径。"
     if preferred == "safe":
         return "音频提取主要处理音频流，硬件视频解码通常收益有限，建议保持安全模式。"
+    if preferred == "rkmpp":
+        return (
+            "检测到 Rockchip rkmpp 解码器。自动模式会识别该能力；但音频提取通常只映射音频流，"
+            "不会强制视频解码。若镜像 FFmpeg 或设备映射不完整，会继续使用 CPU 路径。"
+        )
     return (
         f"检测到 {preferred}。自动模式会优先尝试该后端；如果 NAS 驱动或容器设备映射不完整，会自动回退到 CPU。"
     )

@@ -13,9 +13,12 @@ router = APIRouter(prefix="/files", tags=["files"])
 @router.get("")
 def browse(path: str | None = None):
     settings = load_settings(get_db())
-    current = Path(path or (settings.scan_directories[0] if settings.scan_directories else "/app/input")).expanduser()
+    requested = Path(path or (settings.scan_directories[0] if settings.scan_directories else "/app/input")).expanduser()
+    current = requested
+    warning = ""
     if not current.exists():
-        raise HTTPException(status_code=404, detail="路径不存在")
+        current = Path.cwd()
+        warning = f"路径不存在，已打开当前工作目录: {requested}"
     if current.is_file():
         current = current.parent
     entries = []
@@ -57,6 +60,8 @@ def browse(path: str | None = None):
         )
     return {
         "path": str(current.resolve()),
+        "requested_path": str(requested),
         "parent": str(current.parent.resolve()) if current.parent != current else None,
+        "warning": warning,
         "entries": entries,
     }

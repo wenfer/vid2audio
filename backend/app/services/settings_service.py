@@ -18,4 +18,15 @@ def load_settings(db: Database) -> AppSettings:
         values["scan_directories"] = [os.environ["VID2AUDIO_INPUT"]]
     if os.getenv("VID2AUDIO_OUTPUT"):
         values["output_directory"] = os.environ["VID2AUDIO_OUTPUT"]
+    if os.getenv("VID2AUDIO_HWACCEL"):
+        values["hardware_acceleration"] = os.environ["VID2AUDIO_HWACCEL"]
+    if os.getenv("VID2AUDIO_HWACCEL_DEVICE"):
+        values["hardware_acceleration_device"] = os.environ["VID2AUDIO_HWACCEL_DEVICE"]
+    if os.getenv("VID2AUDIO_HWACCEL_FALLBACK"):
+        values["hardware_acceleration_fallback"] = os.environ["VID2AUDIO_HWACCEL_FALLBACK"].lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
     return defaults.model_copy(update=values)

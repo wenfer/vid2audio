@@ -14,7 +14,7 @@
 - 前导零排序适配与排序验证
 - 任务进度、逐文件结果、成功/失败数量和失败原因简报
 - 全局最小文件大小、视频后缀白名单和过滤后缀配置
-- 硬件加速能力检测，默认自动选择 QSV/VAAPI/CUDA/VideoToolbox，失败自动回退 CPU
+- 硬件加速能力检测，默认自动选择 QSV/VAAPI/CUDA/Rockchip MPP/VideoToolbox，失败自动回退 CPU
 - SQLite 持久化
 - Docker 与 docker-compose 部署文件
 
@@ -40,6 +40,7 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 
 - Intel NAS: `qsv` 或 `vaapi`
 - NVIDIA GPU: `cuda`
+- Rockchip ARM NAS: `rkmpp`
 - macOS 本机调试: `videotoolbox`
 
 如果启用后 FFmpeg 失败，任务会自动用 CPU 重试，并在任务简报中记录回退原因。
@@ -51,6 +52,49 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
+
+默认 compose 不挂载任何硬件设备，保证不支持硬件加速的 NAS 也能正常启动。确认主机支持后，可以叠加 override：
+
+Intel iGPU / VAAPI / QSV：
+
+```bash
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.intel-vaapi.yml \
+  up --build
+```
+
+NVIDIA GPU：
+
+```bash
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.nvidia.yml \
+  up --build
+```
+
+Rockchip ARM / RK356x / RK3588：
+
+```bash
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.rockchip.yml \
+  up --build
+```
+
+Rockchip 需要宿主机暴露 MPP/RGA 设备，并且镜像中的 FFmpeg 具备 `rkmpp` 解码器。不同 NAS 系统设备节点不完全一致，如果容器启动时报某个 `/dev/...` 不存在，可以在 `docker/docker-compose.rockchip.yml` 中注释掉缺失设备。
+
+启动后可在容器内确认 FFmpeg 支持项：
+
+```bash
+docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -hwaccels
+```
+
+硬件加速通过环境变量控制：
+
+- `VID2AUDIO_HWACCEL=auto|safe|qsv|vaapi|cuda|rkmpp|videotoolbox`
+- `VID2AUDIO_HWACCEL_DEVICE=/dev/dri/renderD128`
+- `VID2AUDIO_HWACCEL_FALLBACK=true`
 
 ## GHCR 镜像
 
