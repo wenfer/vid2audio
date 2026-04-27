@@ -8,6 +8,7 @@ services:
       dockerfile: docker/Dockerfile
     container_name: vid2audio
     restart: unless-stopped
+    working_dir: /app
     ports:
       - "8000:8000"
     volumes:
@@ -18,6 +19,7 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app
       - VID2AUDIO_DB=/app/data/vid2audio.db
       - VID2AUDIO_INPUT=/app/input
       - VID2AUDIO_OUTPUT=/app/output
