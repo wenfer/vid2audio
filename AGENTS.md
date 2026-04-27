@@ -126,7 +126,8 @@ Base URL: `/api/v1`
 GitHub Actions builds and publishes multi-arch images to:
 
 ```text
-ghcr.io/wenfer/vid2audio
+ghcr.io/wenfer/vid2audio:<commit-id>
+ghcr.io/wenfer/vid2audio:latest
 ```
 
 Supported platforms:

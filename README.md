@@ -103,10 +103,11 @@ docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -
 - `linux/amd64`
 - `linux/arm64`
 
-镜像地址：
+镜像标签：
 
 ```text
-ghcr.io/wenfer/vid2audio
+ghcr.io/wenfer/vid2audio:<commit-id>
+ghcr.io/wenfer/vid2audio:latest
 ```
 
 如果 Actions 在推送阶段报 `permission_denied: write_package`，优先检查仓库设置：
