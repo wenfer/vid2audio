@@ -53,6 +53,13 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 docker compose -f docker/docker-compose.yml up --build
 ```
 
+如果容器仍然报 `ModuleNotFoundError: No module named 'backend'`，说明正在运行旧镜像。先强制重建本地镜像：
+
+```bash
+docker compose -f docker/docker-compose.yml build --no-cache vid2audio
+docker compose -f docker/docker-compose.yml up --force-recreate
+```
+
 默认 compose 不挂载任何硬件设备，保证不支持硬件加速的 NAS 也能正常启动。确认主机支持后，可以叠加 override：
 
 Intel iGPU / VAAPI / QSV：

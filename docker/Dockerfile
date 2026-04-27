@@ -20,6 +20,8 @@ ENV VID2AUDIO_OUTPUT=/app/output
 ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
+RUN python -c "import backend.app.main"
+
 EXPOSE 8000
 
 CMD ["uvicorn", "--app-dir", "/app", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
