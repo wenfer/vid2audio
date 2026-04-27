@@ -141,6 +141,12 @@ Workflow triggers:
 - Pull requests to `main` build only, without pushing
 - Manual `workflow_dispatch`
 
+GHCR authentication:
+
+- The workflow uses `GITHUB_TOKEN` by default and requests `packages: write`.
+- If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
+- For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
+
 ## Before Finishing a Change
 
 Run at least:

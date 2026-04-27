@@ -109,6 +109,15 @@ docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -
 ghcr.io/wenfer/vid2audio
 ```
 
+如果 Actions 在推送阶段报 `permission_denied: write_package`，优先检查仓库设置：
+
+1. 进入 GitHub 仓库 `Settings -> Actions -> General -> Workflow permissions`，选择 `Read and write permissions`。
+2. 如果仓库属于组织，确认组织没有把 Actions 的 package 写入权限禁用。
+3. 如果 `GITHUB_TOKEN` 仍然无法写入 GHCR，创建一个 classic PAT，勾选 `write:packages` 和 `read:packages`；私有仓库还需要 `repo`。然后在仓库 `Settings -> Secrets and variables -> Actions` 中添加：
+   - `GHCR_TOKEN`: PAT 内容
+   - `GHCR_USERNAME`: PAT 所属 GitHub 用户名，可选；不设置时默认使用 Actions 触发者
+4. 如果同名 package 已经存在，进入 package 设置确认此仓库拥有访问权限，或者删除旧 package 后重新发布。
+
 ## API
 
 Base URL: `/api/v1`
