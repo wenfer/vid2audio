@@ -1,0 +1,178 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Vid2Audio</title>
+    <link rel="stylesheet" href="/static/styles.css" />
+  </head>
+  <body>
+    <div class="app">
+      <aside class="sidebar">
+        <div class="brand">Vid2Audio</div>
+        <button id="refreshFilesBtn" class="primary">刷新文件</button>
+        <div id="status" class="status"></div>
+        <h2 class="nav-title">已分析</h2>
+        <nav id="collections" class="collections"></nav>
+        <h2 class="nav-title">任务</h2>
+        <nav id="jobs" class="collections"></nav>
+      </aside>
+      <main class="content">
+        <section class="toolbar">
+          <div>
+            <h1 id="title">等待扫描</h1>
+            <p id="meta">从文件浏览器选择一个视频文件或文件夹来创建音频提取任务。</p>
+          </div>
+          <button id="settingsBtn">全局配置</button>
+        </section>
+
+        <section id="settingsPanel" class="panel hidden">
+          <div class="grid">
+            <label>
+              默认源目录
+              <input id="defaultSourcePath" placeholder="/app/input" />
+            </label>
+            <label>
+              输出目录
+              <input id="outputDir" placeholder="/app/output" />
+            </label>
+            <label>
+              最小文件大小 MB
+              <input id="minFileSize" type="number" min="0" step="0.1" />
+            </label>
+            <label>
+              视频后缀白名单
+              <input id="videoExtensions" placeholder=".mp4, .mkv" />
+            </label>
+            <label>
+              过滤后缀
+              <input id="ignoredExtensions" placeholder=".part, .tmp" />
+            </label>
+            <label>
+              硬件加速策略
+              <select id="hardwareAcceleration">
+                <option value="auto">自动选择（推荐）</option>
+                <option value="safe">安全模式（CPU）</option>
+                <option value="qsv">Intel QSV</option>
+                <option value="vaapi">VAAPI</option>
+                <option value="cuda">NVIDIA CUDA</option>
+                <option value="videotoolbox">Apple VideoToolbox</option>
+              </select>
+            </label>
+            <label>
+              加速设备
+              <input id="hardwareAccelerationDevice" placeholder="/dev/dri/renderD128，可留空" />
+            </label>
+            <label>
+              默认格式
+              <select id="defaultFormat">
+                <option value="mp3">MP3</option>
+                <option value="m4a">AAC/M4A</option>
+                <option value="ogg">OGG</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV</option>
+                <option value="opus">OPUS</option>
+              </select>
+            </label>
+            <label>
+              质量
+              <select id="defaultQuality">
+                <option value="economy">经济 64kbps</option>
+                <option value="standard">标准 128kbps</option>
+                <option value="premium">优质 192kbps</option>
+                <option value="lossless">高质量 320kbps</option>
+              </select>
+            </label>
+          </div>
+          <button id="saveSettingsBtn" class="primary">保存设置</button>
+        </section>
+
+        <section id="browserPanel" class="panel">
+          <div class="browser-toolbar">
+            <button id="parentDirBtn">上一级</button>
+            <input id="browserPath" />
+            <button id="openPathBtn">打开</button>
+          </div>
+          <div id="fileBrowser" class="file-browser"></div>
+        </section>
+
+        <section id="taskPanel" class="panel">
+          <div class="grid compact-grid">
+            <label class="wide-field">
+              选中的文件夹或视频
+              <input id="sourcePath" placeholder="/app/input/萌鸡小队第一季 或 /app/input/demo.mp4" />
+            </label>
+            <label>
+              任务名称
+              <input id="jobName" placeholder="自动使用文件夹名" />
+            </label>
+            <label>
+              音轨
+              <select id="trackIndex"></select>
+            </label>
+            <label>
+              本任务加速
+              <select id="jobHardwareAcceleration">
+                <option value="">使用全局策略</option>
+                <option value="auto">自动选择</option>
+                <option value="safe">安全模式</option>
+                <option value="qsv">Intel QSV</option>
+                <option value="vaapi">VAAPI</option>
+                <option value="cuda">NVIDIA CUDA</option>
+                <option value="videotoolbox">Apple VideoToolbox</option>
+              </select>
+            </label>
+            <label>
+              格式
+              <select id="format">
+                <option value="mp3">MP3</option>
+                <option value="m4a">AAC/M4A</option>
+                <option value="ogg">OGG</option>
+                <option value="flac">FLAC</option>
+                <option value="wav">WAV</option>
+                <option value="opus">OPUS</option>
+              </select>
+            </label>
+            <label>
+              质量
+              <select id="quality">
+                <option value="economy">经济 64kbps</option>
+                <option value="standard">标准 128kbps</option>
+                <option value="premium">优质 192kbps</option>
+                <option value="lossless">高质量 320kbps</option>
+              </select>
+            </label>
+            <label>
+              采样率
+              <select id="sampleRate">
+                <option value="22050">22050Hz</option>
+                <option value="44100">44100Hz</option>
+                <option value="48000">48000Hz</option>
+              </select>
+            </label>
+            <label>
+              开头偏移秒
+              <input id="trimStart" type="number" min="0" step="0.1" value="0" />
+            </label>
+            <label>
+              结尾偏移秒
+              <input id="trimEnd" type="number" min="0" step="0.1" value="0" />
+            </label>
+          </div>
+          <p id="accelerationHint" class="hint"></p>
+          <div class="actions">
+            <button id="scanBtn">分析选中项</button>
+            <button id="previewBtn">试听选中音轨</button>
+            <button id="extractBtn" class="primary">创建音频提取任务</button>
+          </div>
+          <audio id="previewAudio" controls class="preview-audio hidden"></audio>
+        </section>
+
+        <section id="detail" class="detail empty">
+          <div class="empty-state">暂无合集</div>
+        </section>
+      </main>
+    </div>
+    <script src="/static/app.js"></script>
+  </body>
+</html>

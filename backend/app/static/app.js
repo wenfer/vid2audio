@@ -1,0 +1,415 @@
+const api = "/api/v1";
+
+let collections = [];
+let jobs = [];
+let selected = null;
+let selectedJob = null;
+let settings = null;
+let polling = null;
+let accelerationInfo = null;
+let browserState = null;
+let selectedPath = "";
+
+const $ = (id) => document.getElementById(id);
+
+async function request(path, options = {}) {
+  const response = await fetch(`${api}${path}`, {
+    headers: { "Content-Type": "application/json" },
+    ...options,
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.detail || response.statusText);
+  }
+  return response.json();
+}
+
+function setStatus(message, kind = "") {
+  $("status").className = `status ${kind}`;
+  $("status").textContent = message;
+}
+
+async function loadSettings() {
+  settings = await request("/settings");
+  $("sourcePath").value = settings.scan_directories[0] || "";
+  selectedPath = $("sourcePath").value;
+  $("defaultSourcePath").value = settings.scan_directories[0] || "";
+  $("outputDir").value = settings.output_directory;
+  $("minFileSize").value = settings.min_file_size_mb;
+  $("videoExtensions").value = settings.video_extensions.join(", ");
+  $("ignoredExtensions").value = settings.ignored_extensions.join(", ");
+  $("defaultFormat").value = settings.default_output_format;
+  $("defaultQuality").value = settings.default_quality;
+  $("hardwareAcceleration").value = settings.hardware_acceleration || "auto";
+  $("hardwareAccelerationDevice").value = settings.hardware_acceleration_device || "";
+  $("format").value = settings.default_output_format;
+  $("quality").value = settings.default_quality;
+  $("sampleRate").value = String(settings.default_sample_rate);
+}
+
+async function loadAccelerationInfo() {
+  accelerationInfo = await request("/system/hardware-acceleration");
+  renderAccelerationHint();
+}
+
+async function loadCollections() {
+  collections = await request("/collections");
+  renderCollections();
+}
+
+async function loadJobs() {
+  jobs = await request("/extract/jobs");
+  renderJobs();
+}
+
+async function loadFileBrowser(path = null) {
+  const target = path || selectedPath || (settings && settings.scan_directories[0]) || "";
+  const query = target ? `?path=${encodeURIComponent(target)}` : "";
+  browserState = await request(`/files${query}`);
+  $("browserPath").value = browserState.path;
+  renderFileBrowser();
+}
+
+function renderFileBrowser() {
+  $("parentDirBtn").disabled = !browserState.parent;
+  const rows = browserState.entries
+    .map((entry) => {
+      const icon = entry.type === "directory" ? "▸" : entry.is_video ? "♪" : "·";
+      const selectable = entry.selectable ? "" : "disabled";
+      const typeLabel = entry.type === "directory" ? "文件夹" : entry.is_video ? "视频" : "文件";
+      return `
+        <div class="browser-row ${selectedPath === entry.path ? "active" : ""} ${entry.selectable ? "" : "muted-row"}" data-path="${escapeAttr(entry.path)}" data-type="${entry.type}" data-selectable="${entry.selectable}">
+          <button class="icon-button open-entry" title="${entry.type === "directory" ? "打开文件夹" : "选择文件"}">${icon}</button>
+          <button class="text-button select-entry" ${selectable}>
+            <span class="truncate">${escapeHtml(entry.name)}</span>
+            <small>${typeLabel}${entry.reason ? " · " + escapeHtml(entry.reason) : ""}</small>
+          </button>
+          <div>${entry.type === "file" ? formatBytes(entry.size) : ""}</div>
+        </div>
+      `;
+    })
+    .join("");
+  $("fileBrowser").innerHTML = rows || '<div class="empty-state">这个目录是空的</div>';
+  document.querySelectorAll(".open-entry").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = button.closest(".browser-row");
+      const path = row.dataset.path;
+      if (row.dataset.type === "directory") loadFileBrowser(path);
+      else choosePath(path);
+    });
+  });
+  document.querySelectorAll(".select-entry").forEach((button) => {
+    button.addEventListener("click", () => {
+      const row = button.closest(".browser-row");
+      choosePath(row.dataset.path);
+    });
+  });
+}
+
+function choosePath(path) {
+  selectedPath = path;
+  $("sourcePath").value = path;
+  $("jobName").value = path.split("/").filter(Boolean).pop() || "";
+  renderFileBrowser();
+  setStatus("已选择: " + path);
+}
+
+function renderCollections() {
+  $("collections").innerHTML = collections
+    .map(
+      (item) => `
+        <button class="collection ${selected && selected.id === item.id ? "active" : ""}" data-id="${item.id}">
+          ${escapeHtml(item.name)}
+          <span>${item.episode_count} 个视频 · ${escapeHtml(item.status)}</span>
+        </button>
+      `
+    )
+    .join("");
+  document.querySelectorAll("#collections .collection").forEach((button) => {
+    button.addEventListener("click", () => selectCollection(button.dataset.id));
+  });
+}
+
+function renderJobs() {
+  $("jobs").innerHTML = jobs
+    .map(
+      (job) => `
+        <button class="collection ${selectedJob && selectedJob.id === job.id ? "active" : ""}" data-id="${job.id}">
+          ${escapeHtml(job.name || job.id.slice(0, 8))}
+          <span>${escapeHtml(job.status)} · ${job.progress}% · 成功 ${job.success_count} / 失败 ${job.failure_count}</span>
+        </button>
+      `
+    )
+    .join("");
+  document.querySelectorAll("#jobs .collection").forEach((button) => {
+    button.addEventListener("click", () => selectJob(button.dataset.id));
+  });
+}
+
+async function selectCollection(id) {
+  selectedJob = null;
+  selected = await request(`/collections/${id}`);
+  renderCollections();
+  renderJobs();
+  renderCollectionDetail();
+  syncTaskControlsFromSelection();
+}
+
+async function selectJob(id) {
+  selected = null;
+  selectedJob = await request(`/extract/jobs/${id}`);
+  renderCollections();
+  renderJobs();
+  renderJobDetail();
+}
+
+function renderCollectionDetail() {
+  $("title").textContent = selected.name;
+  $("meta").textContent = `${selected.source_path} · ${selected.episode_count} 个视频`;
+  const rows = selected.video_files
+    .map((video, index) => {
+      return `
+        <div class="file-row">
+          <div>${String(index + 1).padStart(3, "0")}</div>
+          <div class="truncate" title="${escapeAttr(video.filename)}">${escapeHtml(video.episode_title)}</div>
+          <div>${escapeHtml(trackSummary(video.audio_tracks))}</div>
+          <div>${formatDuration(video.duration)}</div>
+        </div>
+      `;
+    })
+    .join("");
+  $("detail").className = "detail";
+  $("detail").innerHTML = `
+    <div class="file-list">
+      <div class="file-row header">
+        <div>序号</div><div>标题</div><div>可用音轨</div><div>时长</div>
+      </div>
+      ${rows || '<div class="empty-state">没有符合过滤条件的视频文件</div>'}
+    </div>
+    <pre class="output-preview">${escapeHtml(outputPreview())}</pre>
+  `;
+}
+
+function renderJobDetail() {
+  $("title").textContent = selectedJob.name || "音频提取任务";
+  $("meta").textContent = `${selectedJob.source_path || "未知源路径"} · ${selectedJob.status}`;
+  const rows = selectedJob.items
+    .map(
+      (item) => `
+        <div class="job-row">
+          <div class="${item.status === "failed" ? "error" : ""}">${escapeHtml(item.status)}</div>
+          <div class="truncate" title="${escapeAttr(item.source_path)}">${escapeHtml(item.title || item.source_path)}</div>
+          <div class="truncate">${escapeHtml(item.output_path || item.error_message || "")}</div>
+        </div>
+      `
+    )
+    .join("");
+  $("detail").className = "detail";
+  $("detail").innerHTML = `
+    <div class="summary">
+      <div><strong>${selectedJob.progress}%</strong><span>进度</span></div>
+      <div><strong>${selectedJob.total_count}</strong><span>总数</span></div>
+      <div><strong>${selectedJob.success_count}</strong><span>成功</span></div>
+      <div><strong>${selectedJob.failure_count}</strong><span>失败</span></div>
+    </div>
+    <div class="progress"><div style="width:${selectedJob.progress}%"></div></div>
+    <p>${escapeHtml(selectedJob.current_file || selectedJob.error_message || "")}</p>
+    <div class="file-list job-list">
+      <div class="job-row header"><div>状态</div><div>文件</div><div>输出或失败原因</div></div>
+      ${rows || '<div class="empty-state">暂无任务明细</div>'}
+    </div>
+    <pre class="output-preview">${escapeHtml(JSON.stringify(selectedJob.summary || {}, null, 2))}</pre>
+  `;
+}
+
+function syncTaskControlsFromSelection() {
+  const tracks = collectTracks(selected);
+  $("trackIndex").innerHTML = tracks
+    .map((track) => `<option value="${track.index}">${escapeHtml(track.label)}</option>`)
+    .join("");
+  $("jobName").value = selected.name;
+  renderAccelerationHint();
+}
+
+function renderAccelerationHint() {
+  const supported = accelerationInfo && accelerationInfo.supported ? accelerationInfo.supported : [];
+  const note = accelerationInfo ? accelerationInfo.note : "";
+  const recommended = accelerationInfo && accelerationInfo.recommended ? accelerationInfo.recommended : "safe";
+  $("accelerationHint").textContent =
+    `硬件加速: ${supported.length ? supported.join(", ") : "未检测到可用后端"}。自动选择: ${recommended}。${note || "自动模式不可用时会使用 CPU。"}`;
+}
+
+function collectTracks(collection) {
+  const first = collection && collection.video_files.find((video) => video.audio_tracks.length);
+  if (!first) return [{ index: 0, label: "默认音轨" }];
+  return first.audio_tracks.map((track) => ({
+    index: track.index,
+    label: `${track.language_full || "未知语言"} · ${track.codec || "audio"} · ${track.channels || "?"}ch · stream ${track.index}`,
+  }));
+}
+
+function trackSummary(tracks) {
+  if (!tracks.length) return "未解析";
+  return tracks.map((track) => `${track.language_full || "未知"} ${track.codec || ""} #${track.index}`).join(" / ");
+}
+
+function outputPreview() {
+  const ext = $("format").value || settings.default_output_format;
+  const lines = [`${settings.output_directory}/${selected.name}/`, `├── 000_${selected.name}.${ext}`];
+  selected.video_files.forEach((video, index) => {
+    const branch = index === selected.video_files.length - 1 ? "└──" : "├──";
+    lines.push(`${branch} ${String(index + 1).padStart(3, "0")}_${video.episode_title}.${ext}`);
+  });
+  return lines.join("\n");
+}
+
+async function detectSource() {
+  try {
+    setStatus("正在分析选中项...");
+    const sourcePath = $("sourcePath").value.trim();
+    const result = await request("/scan/start", {
+      method: "POST",
+      body: JSON.stringify({ source_paths: [sourcePath] }),
+    });
+    setStatus(
+      `分析完成: ${result.files_found} 个视频${result.warnings.length ? "，部分文件已过滤或解析失败" : ""}`,
+      result.warnings.length ? "warning" : ""
+    );
+    await loadCollections();
+    if (result.collections.length) {
+      await selectCollection(result.collections[0].id);
+    }
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function previewSelected() {
+  try {
+    if (!selected || !selected.video_files.length) throw new Error("请先探测源路径并选择合集");
+    const video = selected.video_files[0];
+    const track = Number($("trackIndex").value);
+    const start = Number($("trimStart").value || 0);
+    const audio = $("previewAudio");
+    audio.src = `${api}/preview/${video.id}?track=${track}&duration=10&start=${start}&_=${Date.now()}`;
+    audio.classList.remove("hidden");
+    await audio.play().catch(() => {});
+    setStatus(`正在试听: ${video.filename}`);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function extractSelected() {
+  try {
+    if (!selected) throw new Error("请先探测源路径并选择合集");
+    setStatus("任务已创建，后台开始提取...");
+    const job = await request("/extract", {
+      method: "POST",
+      body: JSON.stringify({
+        collection_id: selected.id,
+        job_name: $("jobName").value.trim() || selected.name,
+        track_index: Number($("trackIndex").value),
+        output_format: $("format").value,
+        quality: $("quality").value,
+        sample_rate: Number($("sampleRate").value),
+        trim_start_seconds: Number($("trimStart").value || 0),
+        trim_end_seconds: Number($("trimEnd").value || 0),
+        hardware_acceleration: $("jobHardwareAcceleration").value || null,
+        generate_intro: true,
+      }),
+    });
+    await loadJobs();
+    await selectJob(job.id);
+    startPolling(job.id);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+function startPolling(jobId) {
+  if (polling) clearInterval(polling);
+  polling = setInterval(async () => {
+    const job = await request(`/extract/jobs/${jobId}`);
+    selectedJob = job;
+    await loadJobs();
+    renderJobDetail();
+    if (["completed", "failed", "cancelled"].includes(job.status)) {
+      clearInterval(polling);
+      polling = null;
+      setStatus(`任务结束: 成功 ${job.success_count}，失败 ${job.failure_count}`, job.failure_count ? "warning" : "");
+    }
+  }, 1200);
+}
+
+async function saveSettings() {
+  try {
+    settings = await request("/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        scan_directories: [$("defaultSourcePath").value.trim()].filter(Boolean),
+        output_directory: $("outputDir").value,
+        min_file_size_mb: Number($("minFileSize").value || 0),
+        video_extensions: csv($("videoExtensions").value),
+        ignored_extensions: csv($("ignoredExtensions").value),
+        default_output_format: $("defaultFormat").value,
+        default_quality: $("defaultQuality").value,
+        hardware_acceleration: $("hardwareAcceleration").value,
+        hardware_acceleration_device: $("hardwareAccelerationDevice").value.trim(),
+        hardware_acceleration_fallback: true,
+      }),
+    });
+    setStatus("全局配置已保存");
+    if (selected) renderCollectionDetail();
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+function csv(value) {
+  return value.split(",").map((item) => item.trim()).filter(Boolean);
+}
+
+function formatDuration(value) {
+  if (!value) return "-";
+  const minutes = Math.floor(value / 60);
+  const seconds = Math.floor(value % 60);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
+}
+
+function formatBytes(value) {
+  if (!value) return "";
+  if (value < 1024 * 1024) return `${Math.round(value / 1024)} KB`;
+  if (value < 1024 * 1024 * 1024) return `${(value / 1024 / 1024).toFixed(1)} MB`;
+  return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "").replace(/[&<>"']/g, (char) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;",
+  })[char]);
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replace(/"/g, "&quot;");
+}
+
+$("scanBtn").addEventListener("click", detectSource);
+$("refreshFilesBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
+$("openPathBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
+$("parentDirBtn").addEventListener("click", () => browserState && browserState.parent && loadFileBrowser(browserState.parent).catch((error) => setStatus(error.message, "error")));
+$("settingsBtn").addEventListener("click", () => $("settingsPanel").classList.toggle("hidden"));
+$("saveSettingsBtn").addEventListener("click", saveSettings);
+$("previewBtn").addEventListener("click", previewSelected);
+$("extractBtn").addEventListener("click", extractSelected);
+
+loadSettings()
+  .then(loadAccelerationInfo)
+  .then(() => loadFileBrowser())
+  .then(loadCollections)
+  .then(loadJobs)
+  .catch((error) => setStatus(error.message, "error"));
