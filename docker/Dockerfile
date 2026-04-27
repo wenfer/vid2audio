@@ -17,8 +17,9 @@ RUN mkdir -p /app/input /app/output /app/config /app/data
 ENV VID2AUDIO_DB=/app/data/vid2audio.db
 ENV VID2AUDIO_INPUT=/app/input
 ENV VID2AUDIO_OUTPUT=/app/output
+ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 EXPOSE 8000
 
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "--app-dir", "/app", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
