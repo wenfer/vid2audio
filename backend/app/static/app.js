@@ -160,8 +160,11 @@ function renderCollections() {
     .map(
       (item) => `
         <button class="collection ${selected && selected.id === item.id ? "active" : ""}" data-id="${item.id}">
-          ${escapeHtml(item.name)}
-          <span>${item.episode_count} 个视频 · ${escapeHtml(item.status)}</span>
+          <span class="item-title" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</span>
+          <span class="item-meta">
+            <span>${item.episode_count} 个视频</span>
+            <span class="badge ${statusClass(item.status)}">${escapeHtml(item.status)}</span>
+          </span>
         </button>
       `
     )
@@ -177,8 +180,11 @@ function renderJobs() {
     .map(
       (job) => `
         <button class="collection ${selectedJob && selectedJob.id === job.id ? "active" : ""}" data-id="${job.id}">
-          ${escapeHtml(job.name || job.id.slice(0, 8))}
-          <span>${escapeHtml(job.status)} · ${job.progress}% · 成功 ${job.success_count} / 失败 ${job.failure_count}</span>
+          <span class="item-title" title="${escapeAttr(job.name || job.id)}">${escapeHtml(job.name || job.id.slice(0, 8))}</span>
+          <span class="item-meta">
+            <span>${job.progress}% · 成功 ${job.success_count} / 失败 ${job.failure_count}</span>
+            <span class="badge ${statusClass(job.status)}">${escapeHtml(job.status)}</span>
+          </span>
         </button>
       `
     )
@@ -479,6 +485,18 @@ function sortLabel(value) {
     natural: "自然数字排序",
     name: "按名称排序",
   }[value] || "NTFS/FAT 兼容排序";
+}
+
+function statusClass(value) {
+  return {
+    completed: "success",
+    scanned: "success",
+    processing: "processing",
+    queued: "processing",
+    failed: "danger",
+    error: "danger",
+    cancelled: "muted",
+  }[value] || "muted";
 }
 
 function showView(view) {
