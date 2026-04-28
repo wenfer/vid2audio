@@ -147,8 +147,8 @@ GHCR authentication:
 - The workflow uses `GITHUB_TOKEN` by default and requests `packages: write`.
 - If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
 - For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
-- The container starts `uvicorn` with `/app` as the app import root. Keep `PYTHONPATH=/app` and `--app-dir /app` aligned with the Dockerfile copy layout so `backend.app.main:app` remains importable.
-- The Dockerfile intentionally imports `backend.app.main` during image build. If this fails, fix the image layout before publishing; if runtime still reports `No module named 'backend'`, the user is almost certainly running an older image and needs to rebuild or pull a newer tag.
+- The container installs the project with `pip install /app`, so `backend` must be importable from site-packages without relying on `/app`, `PYTHONPATH`, or the current working directory.
+- The Dockerfile intentionally imports `backend.app.main` from `/tmp` during image build and verifies `backend.app/static/index.html` is packaged. If this fails, fix packaging before publishing.
 
 ## Before Finishing a Change
 

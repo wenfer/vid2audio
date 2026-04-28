@@ -9,3 +9,6 @@ requires-python = ">=3.11"
 
 [tool.setuptools.packages.find]
 include = ["backend*"]
+
+[tool.setuptools.package-data]
+"backend.app" = ["static/*"]

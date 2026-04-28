@@ -19,7 +19,6 @@ services:
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1
-      - PYTHONPATH=/app
       - VID2AUDIO_DB=/app/data/vid2audio.db
       - VID2AUDIO_INPUT=/app/input
       - VID2AUDIO_OUTPUT=/app/output
