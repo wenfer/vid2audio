@@ -39,6 +39,14 @@ def cancel_job(job_id: str):
     return job
 
 
+@router.delete("/extract/jobs/{job_id}")
+def delete_job(job_id: str):
+    deleted = get_extract_service().delete_job(job_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    return {"deleted": True}
+
+
 @router.post("/extract/jobs/{job_id}/retry")
 def retry_job(job_id: str):
     raise HTTPException(status_code=501, detail="MVP 暂未保存重试所需的完整请求快照")

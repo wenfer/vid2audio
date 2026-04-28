@@ -213,6 +213,17 @@ class CollectionService:
 
     def delete_collection(self, collection_id: str) -> bool:
         with self.db.connect() as conn:
+            conn.execute("UPDATE extract_jobs SET collection_id = NULL WHERE collection_id = ?", (collection_id,))
+            conn.execute(
+                """
+                UPDATE extract_job_items
+                SET video_file_id = NULL
+                WHERE video_file_id IN (
+                    SELECT id FROM video_files WHERE collection_id = ?
+                )
+                """,
+                (collection_id,),
+            )
             cursor = conn.execute("DELETE FROM collections WHERE id = ?", (collection_id,))
             return cursor.rowcount > 0
 

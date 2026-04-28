@@ -251,6 +251,11 @@ class ExtractService:
         self._update_job(job_id, status=JobStatus.cancelled, completed_at=True)
         return self.get_job(job_id)
 
+    def delete_job(self, job_id: str) -> bool:
+        with self.db.connect() as conn:
+            cursor = conn.execute("DELETE FROM extract_jobs WHERE id = ?", (job_id,))
+            return cursor.rowcount > 0
+
     def _mark_failed(self, job_id: str, message: str) -> None:
         with self.db.connect() as conn:
             conn.execute(

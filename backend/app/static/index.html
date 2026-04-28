@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vid2Audio</title>
-    <link rel="stylesheet" href="/static/styles.css?v=4" />
+    <link rel="stylesheet" href="/static/styles.css?v=5" />
   </head>
   <body>
     <div class="app">
@@ -13,7 +13,7 @@
           <div class="brand">Vid2Audio</div>
           <p>音频任务工作台</p>
         </div>
-        <div id="status" class="status"></div>
+        <div class="header-note">Ant Design 风格工作台</div>
         <button id="settingsBtn">系统配置</button>
       </header>
       <aside class="sidebar">
@@ -144,7 +144,10 @@
         <section id="browserPanel" class="panel view-workspace">
           <div class="section-heading">
             <h2>文件浏览器</h2>
-            <span id="browserSummary"></span>
+            <div class="section-tools">
+              <span id="browserSummary"></span>
+              <button id="browserPreviewBtn" class="ghost-button">试听文件</button>
+            </div>
           </div>
           <div class="browser-toolbar">
             <button id="parentDirBtn">上一级</button>
@@ -234,7 +237,9 @@
         <section id="jobPanel" class="panel hidden">
           <div class="section-heading">
             <h2>任务管理</h2>
-            <span id="jobSummary"></span>
+            <div class="section-tools">
+              <span id="jobSummary"></span>
+            </div>
           </div>
           <nav id="jobs" class="collections task-list"></nav>
         </section>
@@ -244,6 +249,47 @@
         </section>
       </main>
     </div>
-    <script src="/static/app.js?v=4"></script>
+    <div id="toastStack" class="toast-stack"></div>
+    <div id="loadingOverlay" class="overlay hidden" aria-hidden="true">
+      <div class="overlay-card">
+        <div class="spinner"></div>
+        <div>
+          <strong id="loadingTitle">处理中</strong>
+          <p id="loadingMessage">请稍候…</p>
+        </div>
+      </div>
+    </div>
+    <div id="jobModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal="jobModal"></div>
+      <div class="modal-dialog modal-xl">
+        <div class="modal-header">
+          <div>
+            <h2 id="jobModalTitle">任务详情</h2>
+            <p id="jobModalMeta"></p>
+          </div>
+          <div class="modal-actions">
+            <button id="deleteJobBtn" class="danger-button">删除任务</button>
+            <button data-close-modal="jobModal">关闭</button>
+          </div>
+        </div>
+        <div id="jobModalBody" class="modal-body"></div>
+      </div>
+    </div>
+    <div id="confirmModal" class="modal hidden" aria-hidden="true">
+      <div class="modal-backdrop" data-close-modal="confirmModal"></div>
+      <div class="modal-dialog">
+        <div class="modal-header">
+          <div>
+            <h2 id="confirmTitle">确认操作</h2>
+            <p id="confirmMessage"></p>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button data-close-modal="confirmModal">取消</button>
+          <button id="confirmActionBtn" class="danger-button">确认</button>
+        </div>
+      </div>
+    </div>
+    <script src="/static/app.js?v=5"></script>
   </body>
 </html>

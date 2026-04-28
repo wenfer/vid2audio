@@ -10,6 +10,7 @@ let accelerationInfo = null;
 let browserState = null;
 let selectedPath = "";
 let activeView = "workspace";
+let confirmHandler = null;
 
 const $ = (id) => document.getElementById(id);
 
@@ -22,12 +23,49 @@ async function request(path, options = {}) {
     const data = await response.json().catch(() => ({}));
     throw new Error(data.detail || response.statusText);
   }
-  return response.json();
+  if (response.status === 204) return null;
+  const contentType = response.headers.get("content-type") || "";
+  return contentType.includes("application/json") ? response.json() : response.text();
 }
 
-function setStatus(message, kind = "") {
-  $("status").className = `status ${kind}`;
-  $("status").textContent = message;
+function toast(message, kind = "info") {
+  const node = document.createElement("div");
+  node.className = `toast ${kind}`;
+  node.textContent = message;
+  $("toastStack").appendChild(node);
+  requestAnimationFrame(() => node.classList.add("show"));
+  setTimeout(() => {
+    node.classList.remove("show");
+    setTimeout(() => node.remove(), 200);
+  }, 2600);
+}
+
+function showLoading(title, message) {
+  $("loadingTitle").textContent = title;
+  $("loadingMessage").textContent = message;
+  $("loadingOverlay").classList.remove("hidden");
+}
+
+function hideLoading() {
+  $("loadingOverlay").classList.add("hidden");
+}
+
+function openModal(id) {
+  $(id).classList.remove("hidden");
+  $(id).setAttribute("aria-hidden", "false");
+}
+
+function closeModal(id) {
+  $(id).classList.add("hidden");
+  $(id).setAttribute("aria-hidden", "true");
+}
+
+function confirmDialog(title, message, actionLabel, action) {
+  $("confirmTitle").textContent = title;
+  $("confirmMessage").textContent = message;
+  $("confirmActionBtn").textContent = actionLabel;
+  confirmHandler = action;
+  openModal("confirmModal");
 }
 
 async function loadSettings() {
@@ -85,7 +123,7 @@ async function loadFileBrowser(path = null) {
   $("browserPath").value = browserState.path;
   renderFileBrowser();
   if (browserState.warning) {
-    setStatus(browserState.warning, "warning");
+    toast(browserState.warning, "warning");
   }
 }
 
@@ -138,7 +176,7 @@ function handleBrowserRowOpen(row) {
   if (row.dataset.selectable !== "true") return;
   const path = row.dataset.path;
   if (row.dataset.type === "directory") {
-    loadFileBrowser(path).catch((error) => setStatus(error.message, "error"));
+    loadFileBrowser(path).catch((error) => toast(error.message, "error"));
   } else {
     choosePath(path);
   }
@@ -152,7 +190,7 @@ function choosePath(path) {
   $("meta").textContent = path;
   $("taskSummary").textContent = "待分析";
   renderFileBrowser();
-  setStatus("已选择: " + path);
+  toast(`已选择: ${path}`);
 }
 
 function renderCollections() {
@@ -205,31 +243,41 @@ async function selectCollection(id) {
 }
 
 async function selectJob(id) {
-  showView("tasks");
   selected = null;
   selectedJob = await request(`/extract/jobs/${id}`);
   renderCollections();
   renderJobs();
-  renderJobDetail();
+  renderJobModal();
+  openModal("jobModal");
 }
 
 function renderCollectionDetail() {
   $("title").textContent = selected.name;
   $("meta").textContent = `${selected.source_path} · ${selected.episode_count} 个视频`;
   const rows = selected.video_files
-    .map((video, index) => {
-      return `
+    .map(
+      (video, index) => `
         <div class="file-row">
           <div>${String(index + 1).padStart(3, "0")}</div>
           <div class="truncate" title="${escapeAttr(video.filename)}">${escapeHtml(video.episode_title)}</div>
           <div>${escapeHtml(trackSummary(video.audio_tracks))}</div>
           <div>${formatDuration(video.duration)}</div>
         </div>
-      `;
-    })
+      `
+    )
     .join("");
   $("detail").className = "detail";
   $("detail").innerHTML = `
+    <div class="detail-header">
+      <div>
+        <h2>合集详情</h2>
+        <p>支持重新分析、试听和删除已分析合集</p>
+      </div>
+      <div class="detail-actions">
+        <button id="rescanCollectionBtn">重新分析</button>
+        <button id="deleteCollectionBtn" class="danger-button">移除已分析合集</button>
+      </div>
+    </div>
     <div class="file-list">
       <div class="file-row header">
         <div>序号</div><div>标题</div><div>可用音轨</div><div>时长</div>
@@ -238,16 +286,18 @@ function renderCollectionDetail() {
     </div>
     <pre class="output-preview">${escapeHtml(outputPreview())}</pre>
   `;
+  $("rescanCollectionBtn").addEventListener("click", () => detectSource(selected.source_path));
+  $("deleteCollectionBtn").addEventListener("click", deleteSelectedCollection);
 }
 
-function renderJobDetail() {
-  $("title").textContent = selectedJob.name || "音频提取任务";
-  $("meta").textContent = `${selectedJob.source_path || "未知源路径"} · ${selectedJob.status}`;
+function renderJobModal() {
+  $("jobModalTitle").textContent = selectedJob.name || "音频提取任务";
+  $("jobModalMeta").textContent = `${selectedJob.source_path || "未知源路径"} · ${selectedJob.status}`;
   const rows = selectedJob.items
     .map(
       (item) => `
         <div class="job-row">
-          <div class="${item.status === "failed" ? "error" : ""}">${escapeHtml(item.status)}</div>
+          <div><span class="badge ${statusClass(item.status)}">${escapeHtml(item.status)}</span></div>
           <div class="truncate" title="${escapeAttr(item.source_path)}">${escapeHtml(item.title || item.source_path)}</div>
           <div class="output-cell">
             <span class="truncate" title="${escapeAttr(item.output_path || item.error_message || "")}">${escapeHtml(item.output_path || item.error_message || "")}</span>
@@ -257,8 +307,7 @@ function renderJobDetail() {
       `
     )
     .join("");
-  $("detail").className = "detail";
-  $("detail").innerHTML = `
+  $("jobModalBody").innerHTML = `
     <div class="summary">
       <div><strong>${selectedJob.progress}%</strong><span>进度</span></div>
       <div><strong>${selectedJob.total_count}</strong><span>总数</span></div>
@@ -324,40 +373,58 @@ function outputPreview() {
   return lines.join("\n");
 }
 
-async function detectSource() {
+async function ensureSelectedCollection() {
+  const sourcePath = $("sourcePath").value.trim();
+  if (!sourcePath) throw new Error("请先选择文件夹或视频");
+  if (selected && (selected.source_path === sourcePath || selected.video_files.some((video) => video.filepath === sourcePath))) {
+    return selected;
+  }
+  showLoading("正在分析选中项", "正在扫描视频并解析音轨，请稍候…");
   try {
-    setStatus("正在分析选中项...");
-    const sourcePath = $("sourcePath").value.trim();
     const result = await request("/scan/start", {
       method: "POST",
       body: JSON.stringify({ source_paths: [sourcePath] }),
     });
-    setStatus(
-      `分析完成: ${result.files_found} 个视频${result.warnings.length ? "，部分文件已过滤或解析失败" : ""}`,
-      result.warnings.length ? "warning" : ""
-    );
     await loadCollections();
-    if (result.collections.length) {
-      await selectCollection(result.collections[0].id);
+    if (!result.collections.length) {
+      throw new Error("没有找到符合过滤条件的视频文件");
     }
+    await selectCollection(result.collections[0].id);
+    toast(
+      `分析完成: ${result.files_found} 个视频${result.warnings.length ? "，部分文件已过滤或解析失败" : ""}`,
+      result.warnings.length ? "warning" : "success"
+    );
+    return selected;
+  } finally {
+    hideLoading();
+  }
+}
+
+async function detectSource(forcedPath = null) {
+  try {
+    if (forcedPath) {
+      $("sourcePath").value = forcedPath;
+    }
+    await ensureSelectedCollection();
   } catch (error) {
-    setStatus(error.message, "error");
+    toast(error.message, "error");
   }
 }
 
 async function previewSelected() {
   try {
-    if (!selected || !selected.video_files.length) throw new Error("请先分析选中项并选择合集");
-    const video = selected.video_files[0];
+    const collection = await ensureSelectedCollection();
+    if (!collection || !collection.video_files.length) throw new Error("请先分析选中项并选择合集");
+    const video = collection.video_files[0];
     const track = Number($("trackIndex").value);
     const start = Number($("trimStart").value || 0);
     const audio = $("previewAudio");
     audio.src = `${api}/preview/${video.id}?track=${track}&duration=10&start=${start}&_=${Date.now()}`;
     audio.classList.remove("hidden");
     await audio.play().catch(() => {});
-    setStatus(`正在试听: ${video.filename}`);
+    toast(`正在试听: ${video.filename}`);
   } catch (error) {
-    setStatus(error.message, "error");
+    toast(error.message, "error");
   }
 }
 
@@ -370,21 +437,22 @@ async function playOutputAudio(itemId) {
     audio.src = `${api}/extract/jobs/${selectedJob.id}/items/${itemId}/audio?_=${Date.now()}`;
     audio.classList.remove("hidden");
     await audio.play().catch(() => {});
-    setStatus(`正在播放: ${item ? item.title || item.output_path : itemId}`);
+    toast(`正在播放: ${item ? item.title || item.output_path : itemId}`);
   } catch (error) {
-    setStatus(error.message, "error");
+    toast(error.message, "error");
   }
 }
 
 async function extractSelected() {
   try {
-    if (!selected) throw new Error("请先分析选中项并选择合集");
-    setStatus("任务已创建，后台开始提取...");
+    const collection = await ensureSelectedCollection();
+    if (!collection) throw new Error("请先分析选中项并选择合集");
+    showLoading("正在创建任务", "任务已提交，正在初始化提取流程…");
     const job = await request("/extract", {
       method: "POST",
       body: JSON.stringify({
-        collection_id: selected.id,
-        job_name: $("jobName").value.trim() || selected.name,
+        collection_id: collection.id,
+        job_name: $("jobName").value.trim() || collection.name,
         track_index: Number($("trackIndex").value),
         output_format: $("format").value,
         quality: $("quality").value,
@@ -403,8 +471,11 @@ async function extractSelected() {
     await loadJobs();
     await selectJob(job.id);
     startPolling(job.id);
+    toast("任务已创建，后台开始提取…", "success");
   } catch (error) {
-    setStatus(error.message, "error");
+    toast(error.message, "error");
+  } finally {
+    hideLoading();
   }
 }
 
@@ -414,22 +485,24 @@ function startPolling(jobId) {
     const job = await request(`/extract/jobs/${jobId}`);
     selectedJob = job;
     await loadJobs();
-    renderJobDetail();
+    renderJobModal();
     if (["completed", "failed", "cancelled"].includes(job.status)) {
       clearInterval(polling);
       polling = null;
-      setStatus(`任务结束: 成功 ${job.success_count}，失败 ${job.failure_count}`, job.failure_count ? "warning" : "");
+      hideLoading();
+      toast(`任务结束: 成功 ${job.success_count}，失败 ${job.failure_count}`, job.failure_count ? "warning" : "success");
     }
   }, 1200);
 }
 
 async function saveSettings() {
   try {
+    showLoading("正在保存配置", "正在写入全局设置…");
     settings = await request("/settings", {
       method: "PUT",
       body: JSON.stringify({
         scan_directories: [$("defaultSourcePath").value.trim()].filter(Boolean),
-        output_directory: $("outputDir").value,
+        output_directory: $("outputDir").value.trim(),
         min_file_size_mb: Number($("minFileSize").value || 0),
         video_extensions: csv($("videoExtensions").value),
         ignored_extensions: csv($("ignoredExtensions").value),
@@ -448,10 +521,14 @@ async function saveSettings() {
         hardware_acceleration_fallback: true,
       }),
     });
-    setStatus("全局配置已保存");
+    await loadSettings();
+    await loadFileBrowser($("browserPath").value || settings.scan_directories[0] || "");
+    toast("全局配置已保存", "success");
     if (selected) renderCollectionDetail();
   } catch (error) {
-    setStatus(error.message, "error");
+    toast(error.message, "error");
+  } finally {
+    hideLoading();
   }
 }
 
@@ -508,17 +585,52 @@ function showView(view) {
   $("taskPanel").classList.toggle("hidden", view !== "workspace");
   $("jobPanel").classList.toggle("hidden", view !== "tasks");
   $("settingsPanel").classList.toggle("hidden", view !== "settings");
-  $("detail").classList.toggle("hidden", view === "settings");
-  if (view === "tasks" && !selectedJob) {
+  $("detail").classList.toggle("hidden", view === "settings" || view === "tasks");
+  if (view === "tasks") {
     $("title").textContent = "任务管理";
     $("meta").textContent = "查看提取进度、任务简报和导出音频";
-    $("detail").className = "detail empty";
-    $("detail").innerHTML = '<div class="empty-state">请选择一个任务</div>';
   }
   if (view === "settings") {
     $("title").textContent = "系统配置";
     $("meta").textContent = "管理扫描过滤、排序、TTS 和硬件加速";
   }
+}
+
+async function deleteSelectedCollection() {
+  if (!selected) return;
+  confirmDialog("移除已分析合集", `将从列表中移除「${selected.name}」，历史任务会保留。`, "确认移除", async () => {
+    showLoading("正在移除合集", "正在清理分析记录…");
+    try {
+      await request(`/collections/${selected.id}`, { method: "DELETE" });
+      selected = null;
+      $("detail").className = "detail empty";
+      $("detail").innerHTML = '<div class="empty-state">暂无合集</div>';
+      await loadCollections();
+      toast("已移除合集", "success");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      hideLoading();
+    }
+  });
+}
+
+async function deleteSelectedJob() {
+  if (!selectedJob) return;
+  confirmDialog("删除任务", `将永久删除任务「${selectedJob.name || selectedJob.id.slice(0, 8)}」及其明细。`, "确认删除", async () => {
+    showLoading("正在删除任务", "正在清理任务记录…");
+    try {
+      await request(`/extract/jobs/${selectedJob.id}`, { method: "DELETE" });
+      selectedJob = null;
+      closeModal("jobModal");
+      await loadJobs();
+      toast("任务已删除", "success");
+    } catch (error) {
+      toast(error.message, "error");
+    } finally {
+      hideLoading();
+    }
+  });
 }
 
 function escapeHtml(value) {
@@ -535,14 +647,27 @@ function escapeAttr(value) {
   return escapeHtml(value).replace(/"/g, "&quot;");
 }
 
-$("scanBtn").addEventListener("click", detectSource);
-$("refreshFilesBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
-$("openPathBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
-$("parentDirBtn").addEventListener("click", () => browserState && browserState.parent && loadFileBrowser(browserState.parent).catch((error) => setStatus(error.message, "error")));
+$("scanBtn").addEventListener("click", () => detectSource());
+$("browserPreviewBtn").addEventListener("click", previewSelected);
+$("refreshFilesBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => toast(error.message, "error")));
+$("openPathBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => toast(error.message, "error")));
+$("parentDirBtn").addEventListener("click", () => browserState && browserState.parent && loadFileBrowser(browserState.parent).catch((error) => toast(error.message, "error")));
 $("settingsBtn").addEventListener("click", () => showView("settings"));
 document.querySelectorAll(".menu-item").forEach((button) => {
   button.addEventListener("click", () => showView(button.dataset.view));
 });
+document.querySelectorAll("[data-close-modal]").forEach((button) => {
+  button.addEventListener("click", () => closeModal(button.dataset.closeModal));
+});
+$("confirmActionBtn").addEventListener("click", async () => {
+  closeModal("confirmModal");
+  if (confirmHandler) {
+    const action = confirmHandler;
+    confirmHandler = null;
+    await action();
+  }
+});
+$("deleteJobBtn").addEventListener("click", deleteSelectedJob);
 $("saveSettingsBtn").addEventListener("click", saveSettings);
 $("previewBtn").addEventListener("click", previewSelected);
 $("extractBtn").addEventListener("click", extractSelected);
@@ -553,4 +678,4 @@ loadSettings()
   .then(loadCollections)
   .then(loadJobs)
   .then(() => showView(activeView))
-  .catch((error) => setStatus(error.message, "error"));
+  .catch((error) => toast(error.message, "error"));
