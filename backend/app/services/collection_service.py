@@ -23,22 +23,7 @@ class CollectionService:
         collections, warnings = scanner.scan(directories or self.settings.scan_directories)
         with self.db.connect() as conn:
             for collection in collections:
-                conn.execute("DELETE FROM collections WHERE source_path = ?", (collection.source_path,))
-                conn.execute(
-                    """
-                    INSERT INTO collections(id, name, source_path, output_path, episode_count, status, settings)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        collection.id,
-                        collection.name,
-                        collection.source_path,
-                        collection.output_path,
-                        collection.episode_count,
-                        collection.status.value,
-                        json.dumps(collection.settings, ensure_ascii=False),
-                    ),
-                )
+                self._upsert_collection(conn, collection)
                 for video in collection.video_files:
                     conn.execute(
                         """
@@ -90,6 +75,64 @@ class CollectionService:
             collections=collections,
             files_found=sum(item.episode_count for item in collections),
             warnings=warnings,
+        )
+
+    def _upsert_collection(self, conn, collection: Collection) -> None:
+        existing = conn.execute(
+            "SELECT id, output_path FROM collections WHERE source_path = ?",
+            (collection.source_path,),
+        ).fetchone()
+        settings = json.dumps(collection.settings, ensure_ascii=False)
+        if existing:
+            collection.id = existing["id"]
+            collection.output_path = collection.output_path or existing["output_path"]
+            for video in collection.video_files:
+                video.collection_id = collection.id
+            conn.execute(
+                """
+                UPDATE extract_job_items
+                SET video_file_id = NULL
+                WHERE video_file_id IN (
+                    SELECT id FROM video_files WHERE collection_id = ?
+                )
+                """,
+                (collection.id,),
+            )
+            conn.execute("DELETE FROM video_files WHERE collection_id = ?", (collection.id,))
+            conn.execute(
+                """
+                UPDATE collections
+                SET name = ?, output_path = ?, episode_count = ?, status = ?,
+                    settings = ?, updated_at = CURRENT_TIMESTAMP
+                WHERE id = ?
+                """,
+                (
+                    collection.name,
+                    collection.output_path,
+                    collection.episode_count,
+                    collection.status.value,
+                    settings,
+                    collection.id,
+                ),
+            )
+            return
+
+        for video in collection.video_files:
+            video.collection_id = collection.id
+        conn.execute(
+            """
+            INSERT INTO collections(id, name, source_path, output_path, episode_count, status, settings)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                collection.id,
+                collection.name,
+                collection.source_path,
+                collection.output_path,
+                collection.episode_count,
+                collection.status.value,
+                settings,
+            ),
         )
 
     def create_collection_from_source(self, source_path: str, job_name: str | None = None) -> tuple[Collection | None, list[str]]:
