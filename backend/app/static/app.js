@@ -232,7 +232,10 @@ function renderJobDetail() {
         <div class="job-row">
           <div class="${item.status === "failed" ? "error" : ""}">${escapeHtml(item.status)}</div>
           <div class="truncate" title="${escapeAttr(item.source_path)}">${escapeHtml(item.title || item.source_path)}</div>
-          <div class="truncate">${escapeHtml(item.output_path || item.error_message || "")}</div>
+          <div class="output-cell">
+            <span class="truncate" title="${escapeAttr(item.output_path || item.error_message || "")}">${escapeHtml(item.output_path || item.error_message || "")}</span>
+            ${item.status === "completed" && item.output_path ? `<button class="small-button play-output" data-item-id="${escapeAttr(item.id)}">播放</button>` : ""}
+          </div>
         </div>
       `
     )
@@ -253,6 +256,9 @@ function renderJobDetail() {
     </div>
     <pre class="output-preview">${escapeHtml(JSON.stringify(selectedJob.summary || {}, null, 2))}</pre>
   `;
+  document.querySelectorAll(".play-output").forEach((button) => {
+    button.addEventListener("click", () => playOutputAudio(button.dataset.itemId));
+  });
 }
 
 function syncTaskControlsFromSelection() {
@@ -329,6 +335,21 @@ async function previewSelected() {
     audio.classList.remove("hidden");
     await audio.play().catch(() => {});
     setStatus(`正在试听: ${video.filename}`);
+  } catch (error) {
+    setStatus(error.message, "error");
+  }
+}
+
+async function playOutputAudio(itemId) {
+  try {
+    if (!selectedJob) throw new Error("请先选择一个任务");
+    if (!itemId) throw new Error("任务文件无效");
+    const item = selectedJob.items.find((entry) => entry.id === itemId);
+    const audio = $("previewAudio");
+    audio.src = `${api}/extract/jobs/${selectedJob.id}/items/${itemId}/audio?_=${Date.now()}`;
+    audio.classList.remove("hidden");
+    await audio.play().catch(() => {});
+    setStatus(`正在播放: ${item ? item.title || item.output_path : itemId}`);
   } catch (error) {
     setStatus(error.message, "error");
   }

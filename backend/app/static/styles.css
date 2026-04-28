@@ -355,6 +355,20 @@ label {
   min-height: 44px;
 }
 
+.output-cell {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+}
+
+.small-button {
+  min-height: 30px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
 .file-row.header,
 .job-row.header {
   background: #f8faf9;
