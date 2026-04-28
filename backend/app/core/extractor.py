@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Callable
 
 from backend.app.core.media import ffmpeg_acceleration_args, require_command, resolve_hardware_acceleration
-from backend.app.core.sorter import calculate_padding, generate_filename, intro_filename, verify_sorting
+from backend.app.core.sorter import calculate_padding, generate_filename, intro_filename, sorted_for_filesystem, verify_sorting
 from backend.app.core.tts_engine import TextToSpeech
 from backend.app.models.schemas import Collection, ExtractRequest
 
@@ -63,14 +63,21 @@ class Extractor:
         if request.selected_video_ids:
             selected = set(request.selected_video_ids)
             videos = [video for video in videos if video.id in selected]
-        videos = sorted(videos, key=lambda item: (item.episode_number, item.filename))
+        ordered_names = sorted_for_filesystem([video.filename for video in videos], request.filesystem_sorting or "ntfs")
+        order = {name: index for index, name in enumerate(ordered_names)}
+        videos = sorted(videos, key=lambda item: (item.episode_number, order.get(item.filename, 0)))
         output_dir = self.output_directory / collection.name
         output_dir.mkdir(parents=True, exist_ok=True)
-        padding = calculate_padding(len(videos))
+        padding = calculate_padding(len(videos), request.padding_digits or "auto")
 
         if request.generate_intro:
             intro_path = output_dir / intro_filename(collection.name, extension)
-            warning = TextToSpeech(request.intro_voice).generate(collection.name, intro_path, bitrate, request.sample_rate)
+            warning = TextToSpeech(
+                request.intro_voice,
+                request.tts_rate or "+0%",
+                provider=request.tts_provider or "edge",
+                failure_mode=request.tts_failure_mode or "silent",
+            ).generate(request.intro_text or collection.name, intro_path, bitrate, request.sample_rate)
             if warning:
                 self.warnings.append(warning)
 

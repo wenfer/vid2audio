@@ -27,6 +27,7 @@ class ExtractService:
         self.collections = collections
 
     def create_job(self, request: ExtractRequest) -> ExtractJob:
+        request = self._apply_request_defaults(request)
         collection = None
         warnings: list[str] = []
         if request.source_path:
@@ -42,6 +43,8 @@ class ExtractService:
             job = self._insert_job(request, None, request.job_name or "未命名任务", request.source_path or "", 0)
             self._mark_failed(job.id, "合集不存在或源路径无效")
             return self.get_job(job.id) or job
+        if not request.intro_text:
+            request.intro_text = self._intro_text(request.job_name or collection.name)
 
         videos = collection.video_files
         if request.selected_video_ids:
@@ -53,6 +56,25 @@ class ExtractService:
         thread = threading.Thread(target=self._run_sync, args=(job.id, request), daemon=True)
         thread.start()
         return self.get_job(job.id) or job
+
+    def _apply_request_defaults(self, request: ExtractRequest) -> ExtractRequest:
+        values = request.model_dump()
+        values["generate_intro"] = bool(values["generate_intro"] and self.settings.tts_enabled)
+        values["intro_voice"] = values["intro_voice"] or self.settings.tts_voice
+        values["tts_provider"] = values["tts_provider"] or self.settings.tts_provider
+        values["tts_rate"] = values["tts_rate"] or self.settings.tts_rate
+        values["tts_failure_mode"] = values["tts_failure_mode"] or self.settings.tts_failure_mode
+        values["filesystem_sorting"] = values["filesystem_sorting"] or self.settings.filesystem_sorting
+        values["padding_digits"] = values["padding_digits"] or self.settings.padding_digits
+        return ExtractRequest(**values)
+
+    def _intro_text(self, fallback_name: str) -> str:
+        template = self.settings.intro_text_template or "{collection_name}"
+        name = Path(fallback_name).name if fallback_name else ""
+        try:
+            return template.format(collection_name=name or "合集")
+        except (KeyError, ValueError):
+            return name or "合集"
 
     def _insert_job(
         self,

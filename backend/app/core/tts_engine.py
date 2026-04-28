@@ -8,14 +8,27 @@ from backend.app.core.media import command_available, require_command
 
 
 class TextToSpeech:
-    def __init__(self, voice: str = "zh-CN-XiaoxiaoNeural", rate: str = "+0%") -> None:
+    def __init__(
+        self,
+        voice: str = "zh-CN-XiaoxiaoNeural",
+        rate: str = "+0%",
+        provider: str = "edge",
+        failure_mode: str = "silent",
+    ) -> None:
         self.voice = voice
         self.rate = rate
+        self.provider = provider
+        self.failure_mode = failure_mode
 
     def generate(self, text: str, output_path: str | Path, bitrate: str = "128k", sample_rate: int = 44100) -> str | None:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
-        if command_available("edge-tts"):
+        if self.provider == "disabled":
+            return "片头语音已禁用。"
+        if self.provider == "silent":
+            self._silent_placeholder(output, bitrate, sample_rate)
+            return "已按配置使用静音片头占位。"
+        if self.provider == "edge" and command_available("edge-tts"):
             raw = output.with_suffix(".tts.tmp.mp3")
             try:
                 subprocess.run(
@@ -39,10 +52,16 @@ class TextToSpeech:
                 return None
             except subprocess.CalledProcessError as exc:
                 raw.unlink(missing_ok=True)
-                self._silent_placeholder(output, bitrate, sample_rate)
-                return f"片头语音生成失败，已使用 1 秒静音占位: {_subprocess_error_message(exc)}"
+                return self._handle_failure(output, bitrate, sample_rate, _subprocess_error_message(exc))
+        return self._handle_failure(output, bitrate, sample_rate, "edge-tts 不可用或 TTS 通道未配置。")
+
+    def _handle_failure(self, output: Path, bitrate: str, sample_rate: int, reason: str) -> str:
+        if self.failure_mode == "fail":
+            raise RuntimeError(reason)
+        if self.failure_mode == "skip":
+            return f"片头语音生成失败，已跳过片头: {reason}"
         self._silent_placeholder(output, bitrate, sample_rate)
-        return "edge-tts 不可用，已使用 1 秒静音片头占位。"
+        return f"片头语音生成失败，已使用 1 秒静音占位: {reason}"
 
     def _normalize(self, source: Path, output: Path, bitrate: str, sample_rate: int) -> None:
         require_command("ffmpeg")

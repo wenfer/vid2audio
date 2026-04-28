@@ -9,6 +9,7 @@ let polling = null;
 let accelerationInfo = null;
 let browserState = null;
 let selectedPath = "";
+let activeView = "workspace";
 
 const $ = (id) => document.getElementById(id);
 
@@ -38,8 +39,15 @@ async function loadSettings() {
   $("minFileSize").value = settings.min_file_size_mb;
   $("videoExtensions").value = settings.video_extensions.join(", ");
   $("ignoredExtensions").value = settings.ignored_extensions.join(", ");
+  $("filesystemSorting").value = settings.filesystem_sorting || "ntfs";
+  $("paddingDigits").value = settings.padding_digits || "auto";
   $("defaultFormat").value = settings.default_output_format;
   $("defaultQuality").value = settings.default_quality;
+  $("ttsProvider").value = settings.tts_provider || (settings.tts_enabled ? "edge" : "disabled");
+  $("ttsFailureMode").value = settings.tts_failure_mode || "silent";
+  $("ttsVoice").value = settings.tts_voice || "zh-CN-XiaoxiaoNeural";
+  $("ttsRate").value = settings.tts_rate || "+0%";
+  $("introTextTemplate").value = settings.intro_text_template || "{collection_name}";
   $("hardwareAcceleration").value = settings.hardware_acceleration || "auto";
   $("hardwareAccelerationDevice").value = settings.hardware_acceleration_device || "";
   $("format").value = settings.default_output_format;
@@ -83,7 +91,7 @@ async function loadFileBrowser(path = null) {
 
 function renderFileBrowser() {
   $("parentDirBtn").disabled = !browserState.parent;
-  $("browserSummary").textContent = `${browserState.entries.length} 项`;
+  $("browserSummary").textContent = `${browserState.entries.length} 项 · ${sortLabel(browserState.sorting || "ntfs")}`;
   const rows = browserState.entries
     .map((entry) => {
       const icon = entry.type === "directory" ? "▸" : entry.is_video ? "♪" : "·";
@@ -164,6 +172,7 @@ function renderCollections() {
 }
 
 function renderJobs() {
+  $("jobSummary").textContent = `${jobs.length} 个任务`;
   $("jobs").innerHTML = jobs
     .map(
       (job) => `
@@ -180,6 +189,7 @@ function renderJobs() {
 }
 
 async function selectCollection(id) {
+  showView("workspace");
   selectedJob = null;
   selected = await request(`/collections/${id}`);
   renderCollections();
@@ -189,6 +199,7 @@ async function selectCollection(id) {
 }
 
 async function selectJob(id) {
+  showView("tasks");
   selected = null;
   selectedJob = await request(`/extract/jobs/${id}`);
   renderCollections();
@@ -295,10 +306,14 @@ function trackSummary(tracks) {
 
 function outputPreview() {
   const ext = $("format").value || settings.default_output_format;
-  const lines = [`${settings.output_directory}/${selected.name}/`, `├── 000_${selected.name}.${ext}`];
+  const lines = [`${settings.output_directory}/${selected.name}/`];
+  if (($("ttsProvider").value || "edge") !== "disabled") {
+    lines.push(`├── 000_${selected.name}.${ext}`);
+  }
+  const padding = previewPadding(selected.video_files.length);
   selected.video_files.forEach((video, index) => {
     const branch = index === selected.video_files.length - 1 ? "└──" : "├──";
-    lines.push(`${branch} ${String(index + 1).padStart(3, "0")}_${video.episode_title}.${ext}`);
+    lines.push(`${branch} ${String(index + 1).padStart(padding, "0")}_${video.episode_title}.${ext}`);
   });
   return lines.join("\n");
 }
@@ -371,7 +386,12 @@ async function extractSelected() {
         trim_start_seconds: Number($("trimStart").value || 0),
         trim_end_seconds: Number($("trimEnd").value || 0),
         hardware_acceleration: $("jobHardwareAcceleration").value || null,
-        generate_intro: true,
+        generate_intro: $("ttsProvider").value !== "disabled",
+        tts_provider: $("ttsProvider").value,
+        tts_rate: $("ttsRate").value.trim() || "+0%",
+        tts_failure_mode: $("ttsFailureMode").value,
+        filesystem_sorting: $("filesystemSorting").value,
+        padding_digits: $("paddingDigits").value,
       }),
     });
     await loadJobs();
@@ -407,8 +427,16 @@ async function saveSettings() {
         min_file_size_mb: Number($("minFileSize").value || 0),
         video_extensions: csv($("videoExtensions").value),
         ignored_extensions: csv($("ignoredExtensions").value),
+        filesystem_sorting: $("filesystemSorting").value,
+        padding_digits: $("paddingDigits").value,
         default_output_format: $("defaultFormat").value,
         default_quality: $("defaultQuality").value,
+        tts_enabled: $("ttsProvider").value !== "disabled",
+        tts_provider: $("ttsProvider").value,
+        tts_failure_mode: $("ttsFailureMode").value,
+        tts_voice: $("ttsVoice").value.trim() || "zh-CN-XiaoxiaoNeural",
+        tts_rate: $("ttsRate").value.trim() || "+0%",
+        intro_text_template: $("introTextTemplate").value.trim() || "{collection_name}",
         hardware_acceleration: $("hardwareAcceleration").value,
         hardware_acceleration_device: $("hardwareAccelerationDevice").value.trim(),
         hardware_acceleration_fallback: true,
@@ -439,6 +467,42 @@ function formatBytes(value) {
   return `${(value / 1024 / 1024 / 1024).toFixed(1)} GB`;
 }
 
+function previewPadding(total) {
+  const configured = $("paddingDigits").value || (settings && settings.padding_digits) || "auto";
+  if (configured !== "auto") return Math.max(Number(configured) || 3, 1);
+  return total < 1000 ? 3 : 4;
+}
+
+function sortLabel(value) {
+  return {
+    ntfs: "NTFS/FAT 兼容排序",
+    natural: "自然数字排序",
+    name: "按名称排序",
+  }[value] || "NTFS/FAT 兼容排序";
+}
+
+function showView(view) {
+  activeView = view;
+  document.querySelectorAll(".menu-item").forEach((button) => {
+    button.classList.toggle("active", button.dataset.view === view);
+  });
+  $("browserPanel").classList.toggle("hidden", view !== "workspace");
+  $("taskPanel").classList.toggle("hidden", view !== "workspace");
+  $("jobPanel").classList.toggle("hidden", view !== "tasks");
+  $("settingsPanel").classList.toggle("hidden", view !== "settings");
+  $("detail").classList.toggle("hidden", view === "settings");
+  if (view === "tasks" && !selectedJob) {
+    $("title").textContent = "任务管理";
+    $("meta").textContent = "查看提取进度、任务简报和导出音频";
+    $("detail").className = "detail empty";
+    $("detail").innerHTML = '<div class="empty-state">请选择一个任务</div>';
+  }
+  if (view === "settings") {
+    $("title").textContent = "系统配置";
+    $("meta").textContent = "管理扫描过滤、排序、TTS 和硬件加速";
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? "").replace(/[&<>"']/g, (char) => ({
     "&": "&amp;",
@@ -457,7 +521,10 @@ $("scanBtn").addEventListener("click", detectSource);
 $("refreshFilesBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
 $("openPathBtn").addEventListener("click", () => loadFileBrowser($("browserPath").value).catch((error) => setStatus(error.message, "error")));
 $("parentDirBtn").addEventListener("click", () => browserState && browserState.parent && loadFileBrowser(browserState.parent).catch((error) => setStatus(error.message, "error")));
-$("settingsBtn").addEventListener("click", () => $("settingsPanel").classList.toggle("hidden"));
+$("settingsBtn").addEventListener("click", () => showView("settings"));
+document.querySelectorAll(".menu-item").forEach((button) => {
+  button.addEventListener("click", () => showView(button.dataset.view));
+});
 $("saveSettingsBtn").addEventListener("click", saveSettings);
 $("previewBtn").addEventListener("click", previewSelected);
 $("extractBtn").addEventListener("click", extractSelected);
@@ -467,4 +534,5 @@ loadSettings()
   .then(() => loadFileBrowser())
   .then(loadCollections)
   .then(loadJobs)
+  .then(() => showView(activeView))
   .catch((error) => setStatus(error.message, "error"));

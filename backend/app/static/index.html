@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Vid2Audio</title>
-    <link rel="stylesheet" href="/static/styles.css?v=3" />
+    <link rel="stylesheet" href="/static/styles.css?v=4" />
   </head>
   <body>
     <div class="app">
@@ -14,14 +14,17 @@
           <p>音频任务工作台</p>
         </div>
         <div id="status" class="status"></div>
-        <button id="settingsBtn">全局配置</button>
+        <button id="settingsBtn">系统配置</button>
       </header>
       <aside class="sidebar">
+        <nav class="main-menu">
+          <button class="menu-item active" data-view="workspace">文件管理</button>
+          <button class="menu-item" data-view="tasks">任务管理</button>
+          <button class="menu-item" data-view="settings">系统配置</button>
+        </nav>
         <button id="refreshFilesBtn" class="primary">刷新文件</button>
-        <h2 class="nav-title">已分析</h2>
+        <h2 class="nav-title">已分析合集</h2>
         <nav id="collections" class="collections"></nav>
-        <h2 class="nav-title">任务</h2>
-        <nav id="jobs" class="collections"></nav>
       </aside>
       <main class="content">
         <section class="toolbar">
@@ -52,6 +55,23 @@
             <label>
               过滤后缀
               <input id="ignoredExtensions" placeholder=".part, .tmp" />
+            </label>
+            <label>
+              文件系统排序
+              <select id="filesystemSorting">
+                <option value="ntfs">NTFS/FAT 兼容排序</option>
+                <option value="natural">自然数字排序</option>
+                <option value="name">按名称排序</option>
+              </select>
+            </label>
+            <label>
+              前导零位数
+              <select id="paddingDigits">
+                <option value="auto">自动</option>
+                <option value="2">2 位</option>
+                <option value="3">3 位</option>
+                <option value="4">4 位</option>
+              </select>
             </label>
             <label>
               硬件加速策略
@@ -89,11 +109,39 @@
                 <option value="lossless">高质量 320kbps</option>
               </select>
             </label>
+            <label>
+              TTS 通道
+              <select id="ttsProvider">
+                <option value="edge">Edge 在线 TTS</option>
+                <option value="silent">静音占位</option>
+                <option value="disabled">禁用片头</option>
+              </select>
+            </label>
+            <label>
+              TTS 失败策略
+              <select id="ttsFailureMode">
+                <option value="silent">失败时静音占位</option>
+                <option value="skip">失败时跳过片头</option>
+                <option value="fail">失败时终止任务</option>
+              </select>
+            </label>
+            <label>
+              TTS 音色
+              <input id="ttsVoice" placeholder="zh-CN-XiaoxiaoNeural" />
+            </label>
+            <label>
+              TTS 语速
+              <input id="ttsRate" placeholder="+0%" />
+            </label>
+            <label class="wide-field">
+              片头文本模板 / LLM 提示词
+              <input id="introTextTemplate" placeholder="{collection_name}" />
+            </label>
           </div>
           <button id="saveSettingsBtn" class="primary">保存设置</button>
         </section>
 
-        <section id="browserPanel" class="panel">
+        <section id="browserPanel" class="panel view-workspace">
           <div class="section-heading">
             <h2>文件浏览器</h2>
             <span id="browserSummary"></span>
@@ -106,7 +154,7 @@
           <div id="fileBrowser" class="file-browser"></div>
         </section>
 
-        <section id="taskPanel" class="panel">
+        <section id="taskPanel" class="panel view-workspace">
           <div class="section-heading">
             <h2>提取设置</h2>
             <span id="taskSummary"></span>
@@ -183,11 +231,19 @@
           <audio id="previewAudio" controls class="preview-audio hidden"></audio>
         </section>
 
+        <section id="jobPanel" class="panel hidden">
+          <div class="section-heading">
+            <h2>任务管理</h2>
+            <span id="jobSummary"></span>
+          </div>
+          <nav id="jobs" class="collections task-list"></nav>
+        </section>
+
         <section id="detail" class="detail empty">
           <div class="empty-state">暂无合集</div>
         </section>
       </main>
     </div>
-    <script src="/static/app.js?v=3"></script>
+    <script src="/static/app.js?v=4"></script>
   </body>
 </html>

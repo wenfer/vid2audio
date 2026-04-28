@@ -8,10 +8,10 @@
 - 目录扫描、合集识别、标题清理
 - 支持按文件夹或单个视频文件创建音频提取任务
 - ffprobe 音轨解析
-- 音轨选择、10 秒试听、开头/结尾偏移
+- 音轨选择、10 秒试听、导出音频播放、开头/结尾偏移
 - MP3/M4A/OGG/FLAC/WAV/OPUS 提取接口
 - `000_合集名.mp3` TTS 提示音占位/生成
-- 前导零排序适配与排序验证
+- NTFS/FAT 兼容排序、自然排序、前导零适配与排序验证
 - 任务进度、逐文件结果、成功/失败数量和失败原因简报
 - 全局最小文件大小、视频后缀白名单和过滤后缀配置
 - 硬件加速能力检测，默认自动选择 QSV/VAAPI/CUDA/Rockchip MPP/VideoToolbox，失败自动回退 CPU
@@ -102,6 +102,22 @@ docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -
 - `VID2AUDIO_HWACCEL=auto|safe|qsv|vaapi|cuda|rkmpp|videotoolbox`
 - `VID2AUDIO_HWACCEL_DEVICE=/dev/dri/renderD128`
 - `VID2AUDIO_HWACCEL_FALLBACK=true`
+
+## 排序和 TTS
+
+系统配置中可以选择文件系统排序策略：
+
+- `NTFS/FAT 兼容排序`: 面向故事机、U 盘、NAS 文件遍历的默认策略，配合前导零文件名保证播放顺序。
+- `自然数字排序`: 更贴近桌面文件管理器的人类数字顺序。
+- `按名称排序`: 只按文件名大小写折叠后排序。
+
+TTS 片头支持多通道配置：
+
+- `Edge 在线 TTS`: 使用 `edge-tts`，需要容器能访问对应在线服务。
+- `静音占位`: 不访问云端，生成 1 秒静音片头。
+- `禁用片头`: 不生成片头文件。
+
+如果 TTS 失败，可以选择静音占位、跳过片头或终止任务。LLM 提示词目前用于配置片头文本模板，音频合成仍需要可用的 TTS 通道。
 
 ## GHCR 镜像
 

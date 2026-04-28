@@ -5,6 +5,7 @@ from backend.app.core.sorter import (
     intro_filename,
     parse_episode_number,
     sanitize_filename_part,
+    sorted_for_filesystem,
 )
 
 
@@ -31,3 +32,11 @@ def test_filename_generation_and_intro():
     assert generate_filename(2, "找/妈妈?", "mp3", 3) == "002_找妈妈？.mp3"
     assert intro_filename("萌鸡小队第一季", "mp3") == "000_萌鸡小队第一季.mp3"
     assert sanitize_filename_part('a:b*c?"d<e>f|') == "a：bc？def"
+
+
+def test_filesystem_sorting_modes_are_explicit():
+    names = ["10_故事.mp3", "2_故事.mp3", "001_片头.mp3"]
+
+    assert sorted_for_filesystem(names, "ntfs") == ["001_片头.mp3", "10_故事.mp3", "2_故事.mp3"]
+    assert sorted_for_filesystem(names, "natural") == ["001_片头.mp3", "2_故事.mp3", "10_故事.mp3"]
+    assert calculate_padding(12, "4") == 4

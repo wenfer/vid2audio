@@ -4,7 +4,7 @@ import uuid
 from pathlib import Path
 
 from backend.app.core.media import probe_video
-from backend.app.core.sorter import clean_title, parse_episode_number
+from backend.app.core.sorter import clean_title, parse_episode_number, sorted_for_filesystem
 from backend.app.models.schemas import Collection, VideoFile
 
 
@@ -31,10 +31,12 @@ class Scanner:
         video_extensions: list[str] | None = None,
         min_file_size_mb: float = 0,
         ignored_extensions: list[str] | None = None,
+        filesystem_sorting: str = "ntfs",
     ) -> None:
         self.video_extensions = {ext.lower() for ext in (video_extensions or VIDEO_EXTENSIONS)}
         self.min_file_size_bytes = int(max(min_file_size_mb, 0) * 1024 * 1024)
         self.ignored_extensions = {ext.lower() for ext in (ignored_extensions or [])}
+        self.filesystem_sorting = filesystem_sorting
 
     def scan(self, paths: list[str]) -> tuple[list[Collection], list[str]]:
         warnings: list[str] = []
@@ -56,7 +58,9 @@ class Scanner:
         for folder, files in sorted(groups.items(), key=lambda item: str(item[0])):
             collection_id = str(uuid.uuid4())
             collection_name = self._collection_name(folder)
-            sorted_files = sorted(files, key=lambda p: (parse_episode_number(p.name, 999999), p.name))
+            filesystem_ordered = sorted_for_filesystem(files, self.filesystem_sorting)
+            order = {path: index for index, path in enumerate(filesystem_ordered)}
+            sorted_files = sorted(filesystem_ordered, key=lambda p: (parse_episode_number(p.name, 999999), order[p]))
             videos: list[VideoFile] = []
             for idx, file_path in enumerate(sorted_files, start=1):
                 try:

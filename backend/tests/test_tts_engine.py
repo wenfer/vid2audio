@@ -28,3 +28,12 @@ def test_edge_tts_failure_falls_back_to_silent_placeholder(monkeypatch, tmp_path
     assert output.read_bytes() == b"silent"
     assert calls[0][0] == "edge-tts"
     assert calls[1][0] == "ffmpeg"
+
+
+def test_tts_can_be_disabled(tmp_path):
+    output = tmp_path / "intro.mp3"
+
+    warning = TextToSpeech(provider="disabled").generate("Season 1", output)
+
+    assert warning == "片头语音已禁用。"
+    assert not output.exists()

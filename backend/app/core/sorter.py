@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Iterable
 
 
 INVALID_CHARS = {
@@ -53,7 +54,12 @@ EPISODE_PATTERNS = [
 ]
 
 
-def calculate_padding(total_episodes: int) -> int:
+def calculate_padding(total_episodes: int, padding_digits: str = "auto") -> int:
+    if padding_digits != "auto":
+        try:
+            return max(int(padding_digits), 1)
+        except ValueError:
+            return 3
     if total_episodes < 100:
         return 3
     if total_episodes < 1000:
@@ -110,10 +116,25 @@ def intro_filename(collection_name: str, extension: str) -> str:
     return f"000_{clean}.{extension.lstrip('.')}"
 
 
+def sort_key(value: str | Path, strategy: str = "ntfs") -> tuple:
+    name = value.name if isinstance(value, Path) else str(value)
+    strategy = (strategy or "ntfs").lower()
+    if strategy == "natural":
+        parts = re.split(r"(\d+)", name.casefold())
+        return tuple((0, int(part)) if part.isdigit() else (1, part) for part in parts)
+    if strategy == "name":
+        return (name.casefold(),)
+    return tuple(ord(char) for char in name.casefold())
+
+
+def sorted_for_filesystem(values: Iterable[str | Path], strategy: str = "ntfs") -> list:
+    return sorted(values, key=lambda item: sort_key(item, strategy))
+
+
 def verify_sorting(output_dir: str | Path, extension: str) -> list[str]:
     ext = "." + extension.lstrip(".")
     files = [p.name for p in Path(output_dir).iterdir() if p.suffix.lower() == ext.lower()]
-    sorted_files = sorted(files)
+    sorted_files = sorted_for_filesystem(files, "ntfs")
     numeric_prefixes = [name.split("_", 1)[0] for name in sorted_files]
     if numeric_prefixes != sorted(numeric_prefixes):
         raise ValueError(f"排序验证失败: {sorted_files}")

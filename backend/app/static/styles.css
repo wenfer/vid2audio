@@ -126,10 +126,34 @@ p {
   font-weight: 760;
 }
 
+.main-menu {
+  display: grid;
+  gap: 8px;
+}
+
+.menu-item {
+  text-align: left;
+  min-height: 40px;
+  border-color: transparent;
+  background: transparent;
+  font-weight: 680;
+}
+
+.menu-item.active,
+.menu-item:hover {
+  background: #fff;
+  border-color: var(--line);
+}
+
 .collections {
   display: flex;
   flex-direction: column;
   gap: 8px;
+}
+
+.task-list {
+  max-height: 360px;
+  overflow: auto;
 }
 
 .collection {

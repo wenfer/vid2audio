@@ -19,6 +19,7 @@ class CollectionService:
             self.settings.video_extensions,
             self.settings.min_file_size_mb,
             self.settings.ignored_extensions,
+            self.settings.filesystem_sorting,
         )
         collections, warnings = scanner.scan(directories or self.settings.scan_directories)
         with self.db.connect() as conn:

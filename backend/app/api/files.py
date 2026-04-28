@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
 
+from backend.app.core.sorter import sorted_for_filesystem
 from backend.app.api.deps import get_db
 from backend.app.services.settings_service import load_settings
 
@@ -26,7 +27,8 @@ def browse(path: str | None = None):
     ignored_extensions = {item.lower() for item in settings.ignored_extensions}
     min_size = int(max(settings.min_file_size_mb, 0) * 1024 * 1024)
     try:
-        children = sorted(current.iterdir(), key=lambda item: (not item.is_dir(), item.name.lower()))
+        children = sorted_for_filesystem(current.iterdir(), settings.filesystem_sorting)
+        children = sorted(children, key=lambda item: not item.is_dir())
     except PermissionError as exc:
         raise HTTPException(status_code=403, detail=f"没有权限读取目录: {current}") from exc
     for child in children:
@@ -63,5 +65,6 @@ def browse(path: str | None = None):
         "requested_path": str(requested),
         "parent": str(current.parent.resolve()) if current.parent != current else None,
         "warning": warning,
+        "sorting": settings.filesystem_sorting,
         "entries": entries,
     }

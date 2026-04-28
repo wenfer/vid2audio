@@ -93,12 +93,16 @@ class AppSettings(BaseModel):
     default_sample_rate: int = 44100
     default_language: str = "zh"
     tts_enabled: bool = True
+    tts_provider: str = "edge"
     tts_voice: str = "zh-CN-XiaoxiaoNeural"
     tts_rate: str = "+0%"
     tts_volume_normalize: bool = True
+    tts_failure_mode: str = "silent"
+    intro_text_template: str = "{collection_name}"
     output_directory: str = "/app/output"
     filename_template: str = "{index}_{title}"
     padding_digits: str = "auto"
+    filesystem_sorting: str = "ntfs"
     preserve_original_audio: bool = False
     max_concurrent_jobs: int = 2
     ffmpeg_threads: int = 4
@@ -129,10 +133,16 @@ class ExtractRequest(BaseModel):
     sample_rate: int = 44100
     generate_intro: bool = True
     intro_voice: str = "zh-CN-XiaoxiaoNeural"
+    tts_provider: str | None = None
+    tts_rate: str | None = None
+    tts_failure_mode: str | None = None
+    intro_text: str | None = None
     selected_video_ids: list[str] | None = None
     trim_start_seconds: float = 0
     trim_end_seconds: float = 0
     hardware_acceleration: str | None = None
+    filesystem_sorting: str | None = None
+    padding_digits: str | None = None
 
 
 class ExtractJob(BaseModel):
