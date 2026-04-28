@@ -168,6 +168,7 @@ class ExtractService:
             summary = {
                 "output_files": files,
                 "failures": failures,
+                "warnings": extractor.warnings,
                 "success_count": success_count,
                 "failure_count": failure_count,
                 "total_count": total,

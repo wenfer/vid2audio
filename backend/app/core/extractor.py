@@ -43,6 +43,7 @@ class Extractor:
         self.hardware_acceleration_device = hardware_acceleration_device
         self.hardware_acceleration_fallback = hardware_acceleration_fallback
         self.acceleration_events: list[dict[str, str]] = []
+        self.warnings: list[str] = []
 
     def extract_collection(
         self,
@@ -69,7 +70,9 @@ class Extractor:
 
         if request.generate_intro:
             intro_path = output_dir / intro_filename(collection.name, extension)
-            TextToSpeech(request.intro_voice).generate(collection.name, intro_path, bitrate, request.sample_rate)
+            warning = TextToSpeech(request.intro_voice).generate(collection.name, intro_path, bitrate, request.sample_rate)
+            if warning:
+                self.warnings.append(warning)
 
         generated: list[str] = []
         failures: list[dict[str, str]] = []

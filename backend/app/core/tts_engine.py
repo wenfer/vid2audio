@@ -12,31 +12,37 @@ class TextToSpeech:
         self.voice = voice
         self.rate = rate
 
-    def generate(self, text: str, output_path: str | Path, bitrate: str = "128k", sample_rate: int = 44100) -> None:
+    def generate(self, text: str, output_path: str | Path, bitrate: str = "128k", sample_rate: int = 44100) -> str | None:
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
         if command_available("edge-tts"):
             raw = output.with_suffix(".tts.tmp.mp3")
-            subprocess.run(
-                [
-                    "edge-tts",
-                    "--text",
-                    text,
-                    "--voice",
-                    self.voice,
-                    "--rate",
-                    self.rate,
-                    "--write-media",
-                    str(raw),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            self._normalize(raw, output, bitrate, sample_rate)
-            raw.unlink(missing_ok=True)
-            return
+            try:
+                subprocess.run(
+                    [
+                        "edge-tts",
+                        "--text",
+                        text,
+                        "--voice",
+                        self.voice,
+                        "--rate",
+                        self.rate,
+                        "--write-media",
+                        str(raw),
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                )
+                self._normalize(raw, output, bitrate, sample_rate)
+                raw.unlink(missing_ok=True)
+                return None
+            except subprocess.CalledProcessError as exc:
+                raw.unlink(missing_ok=True)
+                self._silent_placeholder(output, bitrate, sample_rate)
+                return f"片头语音生成失败，已使用 1 秒静音占位: {_subprocess_error_message(exc)}"
         self._silent_placeholder(output, bitrate, sample_rate)
+        return "edge-tts 不可用，已使用 1 秒静音片头占位。"
 
     def _normalize(self, source: Path, output: Path, bitrate: str, sample_rate: int) -> None:
         require_command("ffmpeg")
@@ -89,3 +95,13 @@ class TextToSpeech:
 
 def tts_available() -> bool:
     return shutil.which("edge-tts") is not None
+
+
+def _subprocess_error_message(exc: subprocess.CalledProcessError) -> str:
+    stderr = (exc.stderr or "").strip()
+    if stderr:
+        return stderr.splitlines()[-1][-500:]
+    stdout = (exc.stdout or "").strip()
+    if stdout:
+        return stdout.splitlines()[-1][-500:]
+    return str(exc)
