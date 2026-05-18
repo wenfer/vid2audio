@@ -19,10 +19,17 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `media.py`: ffprobe parsing and hardware acceleration detection.
   - `extractor.py`: ffmpeg extraction, preview, trim offsets, fallback behavior.
   - `sorter.py`: title cleanup and story-player-safe filename ordering.
-  - `tts_engine.py`: Edge-TTS intro generation with silent fallback.
+  - `tts_engine.py`: Piper TTS intro generation with silent fallback.
 - `backend/app/models/`: Pydantic schemas and SQLite schema/migrations.
 - `backend/app/services/`: persistence-backed business services.
-- `backend/app/static/`: plain HTML/CSS/JS web UI.
+- `backend/app/static/`: Vue 3 built output (served by FastAPI).
+- `frontend/`: Vue 3 + Vite + TypeScript source code.
+  - `src/api/`: API client layer.
+  - `src/components/`: reusable Vue components.
+  - `src/composables/`: Vue composables (shared state/logic).
+  - `src/views/`: page-level view components.
+  - `src/types/`: TypeScript type definitions.
+  - `src/styles/`: global CSS (design tokens).
 - `backend/tests/`: pytest coverage for sorting, scanning, and acceleration helpers.
 - `docker/`: Dockerfile and compose files.
   - `Dockerfile`: multi-stage build, no FFmpeg bundled (user mounts host binaries).
@@ -49,6 +56,15 @@ Run tests:
 
 ```bash
 .venv/bin/python -m pytest backend/tests
+```
+
+Frontend development:
+
+```bash
+cd frontend
+npm install --registry https://registry.npmmirror.com
+npm run dev    # Dev server with HMR at http://localhost:5173
+npm run build  # Build to backend/app/static/
 ```
 
 Compile check:
@@ -161,6 +177,12 @@ Run at least:
 ```bash
 .venv/bin/python -m compileall backend
 .venv/bin/python -m pytest backend/tests
+```
+
+If frontend files changed, rebuild:
+
+```bash
+cd frontend && npm run build
 ```
 
 If UI files changed and the local server is running, refresh `http://127.0.0.1:8000` and verify the affected flow manually.

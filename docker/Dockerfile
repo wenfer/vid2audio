@@ -39,7 +39,7 @@ ENV VID2AUDIO_DB=/app/data/vid2audio.db \
 
 # Verify the package is importable and static assets are bundled
 RUN python -c "import backend.app.main; from pathlib import Path; import backend.app; assert (Path(backend.app.__file__).parent / 'static' / 'index.html').exists()" \
-    && python -c "import uvicorn; import fastapi; import edge_tts"
+    && python -c "import uvicorn; import fastapi"
 
 EXPOSE 8000
 

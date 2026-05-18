@@ -140,7 +140,6 @@ docker compose exec vid2audio ffmpeg -hide_banner -hwaccels
 TTS 片头支持多通道配置：
 
 - `Piper 离线 TTS`（推荐）: 完全离线的神经网络 TTS，无需联网，适合 NAS/Docker 环境。需要安装 Piper 二进制和中文语音模型。
-- `Edge 在线 TTS`: 使用 `edge-tts`，需要容器能访问 Microsoft 在线服务（不稳定，可能被限流）。
 - `静音占位`: 不访问云端，生成 1 秒静音片头。
 - `禁用片头`: 不生成片头文件。
 

@@ -39,3 +39,6 @@ docker
 
 # Tests (not needed in production image)
 backend/tests
+
+# Frontend source (only built output is needed)
+frontend

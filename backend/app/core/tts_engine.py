@@ -13,7 +13,7 @@ PIPER_MODELS_DIR = Path("/app/data/piper-voices")
 class TextToSpeech:
     def __init__(
         self,
-        voice: str = "zh-CN-XiaoxiaoNeural",
+        voice: str = "zh_CN-huayan-medium",
         rate: str = "+0%",
         provider: str = "piper",
         failure_mode: str = "silent",
@@ -32,25 +32,19 @@ class TextToSpeech:
         if self.provider == "silent":
             self._silent_placeholder(output, bitrate, sample_rate)
             return "已按配置使用静音片头占位。"
-
-        # Try the configured provider, fall back through the chain
         if self.provider == "piper":
             return self._try_piper(text, output, bitrate, sample_rate)
-        if self.provider == "edge":
-            return self._try_edge(text, output, bitrate, sample_rate)
 
-        # Unknown provider, try piper then edge
-        result = self._try_piper(text, output, bitrate, sample_rate)
-        if result is None:
-            return None
-        return self._try_edge(text, output, bitrate, sample_rate)
+        # Unknown provider, fall back to silent
+        self._silent_placeholder(output, bitrate, sample_rate)
+        return f"未知 TTS 通道「{self.provider}」，已使用静音占位。"
 
     def _try_piper(self, text: str, output: Path, bitrate: str, sample_rate: int) -> str | None:
         """Generate speech using Piper TTS (offline, local neural TTS)."""
         if not _piper_available():
             return self._handle_failure(
                 output, bitrate, sample_rate,
-                "Piper TTS 未安装。请运行: pip install piper-tts 并下载语音模型。"
+                "Piper TTS 未安装。请安装 piper-tts 并下载语音模型。"
             )
 
         raw = output.with_suffix(".piper.tmp.wav")
@@ -83,32 +77,6 @@ class TextToSpeech:
         except Exception as exc:
             raw.unlink(missing_ok=True)
             return self._handle_failure(output, bitrate, sample_rate, str(exc))
-
-    def _try_edge(self, text: str, output: Path, bitrate: str, sample_rate: int) -> str | None:
-        """Generate speech using Edge TTS (online, requires network)."""
-        if not command_available("edge-tts"):
-            return self._handle_failure(output, bitrate, sample_rate, "edge-tts 命令不可用。")
-
-        raw = output.with_suffix(".tts.tmp.mp3")
-        try:
-            subprocess.run(
-                [
-                    "edge-tts",
-                    "--text", text,
-                    "--voice", self.voice,
-                    "--rate", self.rate,
-                    "--write-media", str(raw),
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-            self._normalize(raw, output, bitrate, sample_rate)
-            raw.unlink(missing_ok=True)
-            return None
-        except subprocess.CalledProcessError as exc:
-            raw.unlink(missing_ok=True)
-            return self._handle_failure(output, bitrate, sample_rate, _subprocess_error_message(exc))
 
     def _handle_failure(self, output: Path, bitrate: str, sample_rate: int, reason: str) -> str:
         if self.failure_mode == "fail":
@@ -165,20 +133,16 @@ def _resolve_piper_model(voice: str) -> Path:
     Accepts:
     - An absolute path to a .onnx model file
     - A model name like 'zh_CN-huayan-medium' (looked up in PIPER_MODELS_DIR)
-    - An edge-tts style voice name (mapped to a Piper model)
     """
-    # If it's already an absolute path to a model file
     path = Path(voice)
     if path.is_absolute() and path.exists():
         return path
 
-    # Map common edge-tts voice names to Piper models
-    piper_name = _edge_voice_to_piper(voice)
+    piper_name = voice
 
     # Look in the models directory
     models_dir = PIPER_MODELS_DIR
     if not models_dir.exists():
-        # Also check a local fallback path
         local_dir = Path("data/piper-voices")
         if local_dir.exists():
             models_dir = local_dir
@@ -200,16 +164,6 @@ def _resolve_piper_model(voice: str) -> Path:
             return onnx_files[0]
 
     raise FileNotFoundError(f"Piper model not found: {piper_name} in {models_dir}")
-
-
-def _edge_voice_to_piper(voice: str) -> str:
-    """Map edge-tts voice names to Piper model names."""
-    mapping = {
-        "zh-CN-XiaoxiaoNeural": PIPER_DEFAULT_MODEL,
-        "zh-CN-YunxiNeural": PIPER_DEFAULT_MODEL,
-        "zh-CN-YunyangNeural": PIPER_DEFAULT_MODEL,
-    }
-    return mapping.get(voice, voice if not voice.endswith("Neural") else PIPER_DEFAULT_MODEL)
 
 
 def _subprocess_error_message(exc: subprocess.CalledProcessError) -> str:
