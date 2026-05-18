@@ -14,8 +14,19 @@ services:
     volumes:
       - /nas/media/videos:/app/input:ro
       - /nas/media/audio-output:/app/output
-      - ../config:/app/config
       - ../data:/app/data
+      # Mount host ffmpeg/ffprobe binaries into the container.
+      # Adjust paths to match your system. Common locations:
+      #   Linux:  /usr/bin/ffmpeg, /usr/bin/ffprobe
+      #   NAS:    /usr/local/bin/ffmpeg, /usr/local/bin/ffprobe
+      # The container adds /app/bin to PATH so these will be found automatically.
+      - /usr/bin/ffmpeg:/app/bin/ffmpeg:ro
+      - /usr/bin/ffprobe:/app/bin/ffprobe:ro
+      # Optional: mount Piper TTS binary and voice models for offline TTS.
+      # Install piper: pip install piper-tts && which piper
+      # Download voice: python3 -m piper.download_voices zh_CN-huayan-medium
+      # - /usr/local/bin/piper:/app/bin/piper:ro
+      # - /path/to/piper-voices:/app/data/piper-voices:ro
     environment:
       - TZ=Asia/Shanghai
       - PYTHONUNBUFFERED=1

@@ -38,9 +38,18 @@ def detect_hardware_acceleration() -> dict[str, object]:
         return {
             "available": False,
             "supported": [],
+            "backends": [],
             "recommended": "safe",
             "note": "未找到 ffmpeg。Docker 镜像会安装 FFmpeg，本机运行需先安装。",
+            "ffmpeg_version": None,
         }
+    version_result = subprocess.run(["ffmpeg", "-version"], capture_output=True, text=True, check=False)
+    ffmpeg_version = ""
+    for line in version_result.stdout.splitlines():
+        if line.startswith("ffmpeg version"):
+            ffmpeg_version = line.split("version")[-1].strip().split()[0] if "version" in line else ""
+            break
+
     result = subprocess.run(["ffmpeg", "-hide_banner", "-hwaccels"], capture_output=True, text=True, check=False)
     supported = []
     for line in result.stdout.splitlines():
@@ -48,16 +57,84 @@ def detect_hardware_acceleration() -> dict[str, object]:
         if value and not value.lower().startswith("hardware"):
             supported.append(value)
     decoder_result = subprocess.run(["ffmpeg", "-hide_banner", "-decoders"], capture_output=True, text=True, check=False)
-    if "rkmpp" in decoder_result.stdout.lower():
+    has_rkmpp = "rkmpp" in decoder_result.stdout.lower()
+    if has_rkmpp:
         supported.append("rkmpp")
     supported = sorted(set(supported), key=supported.index)
     preferred = _preferred_acceleration(supported)
+
+    backends = _build_backend_details(supported, preferred)
+
     return {
         "available": bool(supported),
         "supported": supported,
+        "backends": backends,
         "recommended": preferred,
         "note": _acceleration_note(preferred, supported),
+        "ffmpeg_version": ffmpeg_version or None,
     }
+
+
+def _build_backend_details(supported: list[str], recommended: str) -> list[dict[str, object]]:
+    """Build structured details for each known acceleration backend."""
+    all_backends = [
+        {
+            "id": "safe",
+            "name": "CPU 软解",
+            "description": "纯 CPU 处理，兼容性最好，适合所有环境",
+            "icon": "cpu",
+            "always_available": True,
+        },
+        {
+            "id": "qsv",
+            "name": "Intel QSV",
+            "description": "Intel 核显加速，适合 Intel NAS 和 PC",
+            "icon": "chip",
+            "device_hint": "/dev/dri/renderD128",
+        },
+        {
+            "id": "vaapi",
+            "name": "VAAPI",
+            "description": "Linux 通用视频加速接口，支持 Intel/AMD GPU",
+            "icon": "chip",
+            "device_hint": "/dev/dri/renderD128",
+        },
+        {
+            "id": "cuda",
+            "name": "NVIDIA CUDA",
+            "description": "NVIDIA 显卡加速，需要 NVIDIA Container Toolkit",
+            "icon": "gpu",
+            "device_hint": "",
+        },
+        {
+            "id": "rkmpp",
+            "name": "Rockchip MPP",
+            "description": "瑞芯微 ARM SoC 硬件解码，适合 ARM NAS",
+            "icon": "arm",
+            "device_hint": "/dev/mpp_service",
+        },
+        {
+            "id": "videotoolbox",
+            "name": "Apple VideoToolbox",
+            "description": "macOS 原生硬件加速",
+            "icon": "apple",
+            "device_hint": "",
+        },
+    ]
+    lowered_supported = {s.lower() for s in supported}
+    result = []
+    for backend in all_backends:
+        entry = {
+            **backend,
+            "detected": backend.get("always_available", False) or backend["id"] in lowered_supported,
+            "is_recommended": backend["id"] == recommended,
+        }
+        if backend["id"] == "rkmpp":
+            entry["note"] = "基于编解码器的加速（h264_rkmpp/hevc_rkmpp），音频提取时不强制视频解码"
+        elif backend["id"] == "safe":
+            entry["note"] = "音频提取主要处理音频流，CPU 模式通常已足够快"
+        result.append(entry)
+    return result
 
 
 def ffmpeg_acceleration_args(mode: str, device: str = "") -> list[str]:

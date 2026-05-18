@@ -28,9 +28,11 @@ def status():
 
 @router.get("/hardware-acceleration")
 def hardware_acceleration():
+    """Return hardware acceleration detection results with backend details."""
     return detect_hardware_acceleration()
 
 
-@router.get("/logs")
-def logs():
-    return {"logs": []}
+@router.post("/hardware-acceleration/detect")
+def redetect_hardware_acceleration():
+    """Force re-detection of hardware acceleration capabilities."""
+    return detect_hardware_acceleration()

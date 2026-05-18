@@ -24,8 +24,11 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 - `backend/app/services/`: persistence-backed business services.
 - `backend/app/static/`: plain HTML/CSS/JS web UI.
 - `backend/tests/`: pytest coverage for sorting, scanning, and acceleration helpers.
-- `docker/`: Dockerfile and compose file.
-  - `docker-compose.yml`: portable default compose, no hardware device mount.
+- `docker/`: Dockerfile and compose files.
+  - `Dockerfile`: multi-stage build, no FFmpeg bundled (user mounts host binaries).
+  - `Dockerfile.ffmpeg-bundled`: alternative Dockerfile that installs FFmpeg via apt.
+  - `docker-compose.yml`: portable default compose with host ffmpeg mount.
+  - `docker-compose.ffmpeg-bundled.yml`: override to use the bundled-FFmpeg image.
   - `docker-compose.intel-vaapi.yml`: Intel iGPU / VAAPI / QSV override.
   - `docker-compose.nvidia.yml`: NVIDIA Container Toolkit override.
   - `docker-compose.rockchip.yml`: Rockchip MPP/RGA device override for ARM NAS systems.
@@ -148,6 +151,7 @@ GHCR authentication:
 - If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
 - For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
 - The container installs the project with `pip install /app`, so `backend` must be importable from site-packages without relying on `/app`, `PYTHONPATH`, or the current working directory.
+- The default Dockerfile does NOT bundle FFmpeg; it expects the user to mount host `ffmpeg`/`ffprobe` binaries via volumes. `Dockerfile.ffmpeg-bundled` is provided for users without host FFmpeg.
 - The Dockerfile intentionally imports `backend.app.main` from `/tmp` during image build and verifies `backend.app/static/index.html` is packaged. If this fails, fix packaging before publishing.
 
 ## Before Finishing a Change

@@ -35,10 +35,3 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 @app.get("/")
 def index():
     return FileResponse(static_dir / "index.html")
-
-
-@app.websocket("/ws")
-async def websocket_endpoint(websocket):
-    await websocket.accept()
-    await websocket.send_json({"type": "hello", "message": "Vid2Audio MVP 使用 REST 查询任务状态"})
-    await websocket.close()

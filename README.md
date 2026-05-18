@@ -30,7 +30,7 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 
 打开 http://127.0.0.1:8000。
 
-本机需要安装 `ffmpeg` 和 `ffprobe` 才能解析和提取真实视频。Docker 镜像会自动安装 FFmpeg。
+本机需要安装 `ffmpeg` 和 `ffprobe` 才能解析和提取真实视频。Docker 默认通过挂载宿主机二进制文件使用 FFmpeg。
 
 ## 硬件加速策略
 
@@ -47,18 +47,44 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 
 ## Docker 运行
 
-先调整 [docker/docker-compose.yml](/Users/qiuyuan/vscode/vid2audio/docker/docker-compose.yml) 中的输入和输出目录挂载：
+默认镜像**不包含 FFmpeg**，通过挂载宿主机的 `ffmpeg`/`ffprobe` 二进制文件来使用。这样镜像体积更小（约 80MB vs 200MB+），且可以直接使用宿主机已编译好的硬件加速版本。
+
+先调整 [docker/docker-compose.yml](docker/docker-compose.yml) 中的路径：
+
+```yaml
+volumes:
+  - /your/videos:/app/input:ro
+  - /your/output:/app/output
+  # 映射宿主机 ffmpeg（根据实际路径调整）
+  - /usr/bin/ffmpeg:/app/bin/ffmpeg:ro
+  - /usr/bin/ffprobe:/app/bin/ffprobe:ro
+```
+
+然后启动：
 
 ```bash
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-如果容器仍然报 `ModuleNotFoundError: No module named 'backend'`，说明正在运行旧镜像。先强制重建本地镜像：
+### 如果宿主机没有 FFmpeg
+
+使用内置 FFmpeg 的 override 文件（镜像会大 80-120MB）：
 
 ```bash
-docker compose -f docker/docker-compose.yml build --no-cache vid2audio
-docker compose -f docker/docker-compose.yml up --force-recreate
+docker compose \
+  -f docker/docker-compose.yml \
+  -f docker/docker-compose.ffmpeg-bundled.yml \
+  up --build
 ```
+
+### 查找宿主机 FFmpeg 路径
+
+```bash
+which ffmpeg ffprobe
+# 常见位置: /usr/bin/ffmpeg, /usr/local/bin/ffmpeg
+```
+
+### 硬件加速 override
 
 默认 compose 不挂载任何硬件设备，保证不支持硬件加速的 NAS 也能正常启动。确认主机支持后，可以叠加 override：
 
@@ -89,12 +115,12 @@ docker compose \
   up --build
 ```
 
-Rockchip 需要宿主机暴露 MPP/RGA 设备，并且镜像中的 FFmpeg 具备 `rkmpp` 解码器。不同 NAS 系统设备节点不完全一致，如果容器启动时报某个 `/dev/...` 不存在，可以在 `docker/docker-compose.rockchip.yml` 中注释掉缺失设备。
+Rockchip 需要宿主机暴露 MPP/RGA 设备，并且宿主机 FFmpeg 具备 `rkmpp` 解码器。不同 NAS 系统设备节点不完全一致，如果容器启动时报某个 `/dev/...` 不存在，可以在 override 文件中注释掉缺失设备。
 
 启动后可在容器内确认 FFmpeg 支持项：
 
 ```bash
-docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -hwaccels
+docker compose exec vid2audio ffmpeg -hide_banner -hwaccels
 ```
 
 硬件加速通过环境变量控制：
@@ -113,11 +139,34 @@ docker compose -f docker/docker-compose.yml exec vid2audio ffmpeg -hide_banner -
 
 TTS 片头支持多通道配置：
 
-- `Edge 在线 TTS`: 使用 `edge-tts`，需要容器能访问对应在线服务。
+- `Piper 离线 TTS`（推荐）: 完全离线的神经网络 TTS，无需联网，适合 NAS/Docker 环境。需要安装 Piper 二进制和中文语音模型。
+- `Edge 在线 TTS`: 使用 `edge-tts`，需要容器能访问 Microsoft 在线服务（不稳定，可能被限流）。
 - `静音占位`: 不访问云端，生成 1 秒静音片头。
 - `禁用片头`: 不生成片头文件。
 
-如果 TTS 失败，可以选择静音占位、跳过片头或终止任务。LLM 提示词目前用于配置片头文本模板，音频合成仍需要可用的 TTS 通道。
+### 安装 Piper TTS（推荐）
+
+```bash
+# 在宿主机安装 Piper
+pip install piper-tts
+
+# 下载中文语音模型
+python3 -m piper.download_voices zh_CN-huayan-medium
+
+# 找到 piper 二进制和模型路径
+which piper
+# 模型通常在 ~/.local/share/piper-voices/ 或 site-packages 内
+```
+
+Docker 中使用 Piper：
+
+```yaml
+volumes:
+  - /usr/local/bin/piper:/app/bin/piper:ro
+  - /path/to/piper-voices:/app/data/piper-voices:ro
+```
+
+如果 TTS 失败，可以选择静音占位、跳过片头或终止任务。
 
 ## GHCR 镜像
 

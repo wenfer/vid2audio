@@ -47,11 +47,6 @@ def delete_job(job_id: str):
     return {"deleted": True}
 
 
-@router.post("/extract/jobs/{job_id}/retry")
-def retry_job(job_id: str):
-    raise HTTPException(status_code=501, detail="MVP 暂未保存重试所需的完整请求快照")
-
-
 @router.get("/extract/jobs/{job_id}/items/{item_id}/audio")
 def play_extracted_audio(job_id: str, item_id: str):
     job = get_extract_service().get_job_detail(job_id)

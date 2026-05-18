@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -68,7 +67,6 @@ class Collection(BaseModel):
 
 class AppSettings(BaseModel):
     scan_directories: list[str] = Field(default_factory=lambda: ["/app/input"])
-    auto_scan_interval: int = 0
     video_extensions: list[str] = Field(
         default_factory=lambda: [
             ".mp4",
@@ -91,20 +89,15 @@ class AppSettings(BaseModel):
     default_output_format: str = "mp3"
     default_quality: str = "standard"
     default_sample_rate: int = 44100
-    default_language: str = "zh"
     tts_enabled: bool = True
-    tts_provider: str = "edge"
-    tts_voice: str = "zh-CN-XiaoxiaoNeural"
+    tts_provider: str = "piper"
+    tts_voice: str = "zh_CN-huayan-medium"
     tts_rate: str = "+0%"
-    tts_volume_normalize: bool = True
     tts_failure_mode: str = "silent"
     intro_text_template: str = "{collection_name}"
     output_directory: str = "/app/output"
-    filename_template: str = "{index}_{title}"
     padding_digits: str = "auto"
     filesystem_sorting: str = "ntfs"
-    preserve_original_audio: bool = False
-    max_concurrent_jobs: int = 2
     ffmpeg_threads: int = 4
     hardware_acceleration: str = "auto"
     hardware_acceleration_device: str = ""
@@ -132,7 +125,7 @@ class ExtractRequest(BaseModel):
     quality: str = "standard"
     sample_rate: int = 44100
     generate_intro: bool = True
-    intro_voice: str = "zh-CN-XiaoxiaoNeural"
+    intro_voice: str = "zh_CN-huayan-medium"
     tts_provider: str | None = None
     tts_rate: str | None = None
     tts_failure_mode: str | None = None
@@ -186,13 +179,6 @@ class ExtractJobDetail(ExtractJob):
     items: list[ExtractJobItem] = Field(default_factory=list)
 
 
-class PreviewFile(BaseModel):
-    source: str
-    output: str
-    title: str
-    episode_number: int
-
-
 class SystemStatus(BaseModel):
     version: str
     ffmpeg_available: bool
@@ -201,7 +187,3 @@ class SystemStatus(BaseModel):
     input_directories: list[str]
     output_directory: str
     hardware_acceleration: dict[str, Any] = Field(default_factory=dict)
-
-
-def ensure_path(value: str) -> Path:
-    return Path(value).expanduser().resolve()
