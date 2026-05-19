@@ -40,5 +40,6 @@ docker
 # Tests (not needed in production image)
 backend/tests
 
-# Frontend source (only built output is needed)
-frontend
+# Frontend (only source needed for Docker build, node_modules excluded)
+frontend/node_modules
+frontend/dist

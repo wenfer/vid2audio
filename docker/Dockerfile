@@ -1,4 +1,16 @@
-# ---- Build stage: install Python dependencies ----
+# ---- Frontend build stage ----
+FROM node:20-slim AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json* /frontend/
+RUN npm install --registry https://registry.npmmirror.com
+
+COPY frontend/ /frontend/
+RUN npm run build
+
+
+# ---- Python build stage ----
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -8,22 +20,24 @@ RUN pip install --no-cache-dir --no-compile --prefix=/install -r /build/requirem
 
 COPY pyproject.toml /build/pyproject.toml
 COPY backend /build/backend
+
+# Copy frontend build output into static directory
+COPY --from=frontend /backend/app/static /build/backend/app/static
+
 RUN pip install --no-cache-dir --no-compile --no-deps --prefix=/install /build
 
-# Strip dist-info metadata, tests, and __pycache__ from installed packages
+# Strip unnecessary metadata
 RUN find /install -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; \
     find /install -type d -name 'tests' -exec rm -rf {} + 2>/dev/null; \
     find /install -type d -name '*.dist-info' -exec sh -c 'rm -f "$1"/RECORD "$1"/SOURCES.txt "$1"/direct_url.json' _ {} \; 2>/dev/null; \
     true
 
 
-# ---- Runtime stage: minimal image ----
+# ---- Runtime stage ----
 FROM python:3.11-slim
 
-# Remove apt cache and docs from base image to save space
 RUN rm -rf /var/lib/apt/lists/* /usr/share/doc /usr/share/man /usr/share/info
 
-# Copy only installed packages from builder
 COPY --from=builder /install /usr/local
 
 WORKDIR /app
@@ -38,8 +52,7 @@ ENV VID2AUDIO_DB=/app/data/vid2audio.db \
     PATH="/app/bin:${PATH}"
 
 # Verify the package is importable and static assets are bundled
-RUN python -c "import backend.app.main; from pathlib import Path; import backend.app; assert (Path(backend.app.__file__).parent / 'static' / 'index.html').exists()" \
-    && python -c "import uvicorn; import fastapi"
+RUN python -c "import backend.app.main; from pathlib import Path; import backend.app; p = Path(backend.app.__file__).parent / 'static'; assert (p / 'index.html').exists(); assert (p / 'assets').is_dir()"
 
 EXPOSE 8000
 

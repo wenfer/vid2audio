@@ -1,8 +1,19 @@
 # Dockerfile with FFmpeg bundled inside the image.
 # Use this if your host does not have ffmpeg/ffprobe installed.
-# Image size will be larger (~80MB extra for FFmpeg).
 
-# ---- Build stage ----
+# ---- Frontend build stage ----
+FROM node:20-slim AS frontend
+
+WORKDIR /frontend
+
+COPY frontend/package.json frontend/package-lock.json* /frontend/
+RUN npm install --registry https://registry.npmmirror.com
+
+COPY frontend/ /frontend/
+RUN npm run build
+
+
+# ---- Python build stage ----
 FROM python:3.11-slim AS builder
 
 WORKDIR /build
@@ -12,6 +23,8 @@ RUN pip install --no-cache-dir --no-compile --prefix=/install -r /build/requirem
 
 COPY pyproject.toml /build/pyproject.toml
 COPY backend /build/backend
+COPY --from=frontend /backend/app/static /build/backend/app/static
+
 RUN pip install --no-cache-dir --no-compile --no-deps --prefix=/install /build
 
 RUN find /install -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null; \
@@ -39,7 +52,7 @@ ENV VID2AUDIO_DB=/app/data/vid2audio.db \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1
 
-RUN python -c "import backend.app.main; from pathlib import Path; import backend.app; assert (Path(backend.app.__file__).parent / 'static' / 'index.html').exists()"
+RUN python -c "import backend.app.main; from pathlib import Path; import backend.app; p = Path(backend.app.__file__).parent / 'static'; assert (p / 'index.html').exists(); assert (p / 'assets').is_dir()"
 
 EXPOSE 8000
 
