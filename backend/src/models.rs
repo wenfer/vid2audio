@@ -105,9 +105,6 @@ pub struct AppSettings {
     pub padding_digits: String,
     pub filesystem_sorting: String,
     pub ffmpeg_threads: i64,
-    pub hardware_acceleration: String,
-    pub hardware_acceleration_device: String,
-    pub hardware_acceleration_fallback: bool,
 }
 
 impl Default for AppSettings {
@@ -139,9 +136,6 @@ impl Default for AppSettings {
             padding_digits: "auto".into(),
             filesystem_sorting: "ntfs".into(),
             ffmpeg_threads: 4,
-            hardware_acceleration: "auto".into(),
-            hardware_acceleration_device: String::new(),
-            hardware_acceleration_fallback: true,
         }
     }
 }
@@ -186,7 +180,6 @@ pub struct ExtractRequest {
     pub trim_start_seconds: f64,
     #[serde(default)]
     pub trim_end_seconds: f64,
-    pub hardware_acceleration: Option<String>,
     pub filesystem_sorting: Option<String>,
     #[serde(default)]
     pub padding_digits: Option<String>,

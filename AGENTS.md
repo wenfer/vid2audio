@@ -12,8 +12,8 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `src/db.rs`: SQLite schema, migrations, and persistence.
   - `src/models.rs`: Serde request/response models.
   - `src/scanner.rs`: video discovery, grouping, and filtering.
-  - `src/media.rs`: ffprobe parsing and acceleration detection.
-  - `src/extractor.rs`: FFmpeg extraction, preview, TTS, and fallback behavior.
+  - `src/media.rs`: ffprobe parsing.
+  - `src/extractor.rs`: FFmpeg extraction, preview, and TTS.
   - `src/sorter.rs`: story-player-safe filename ordering.
   - `static/`: generated Vue output, not committed.
 - `frontend/`: Vue 3 + Vite + TypeScript source code.
@@ -27,9 +27,6 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 - `docker/`: Dockerfile and compose files.
   - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
   - `docker-compose.yml`: default self-contained deployment.
-  - `docker-compose.intel-vaapi.yml`: Intel iGPU / VAAPI / QSV override.
-  - `docker-compose.nvidia.yml`: NVIDIA Container Toolkit override.
-  - `docker-compose.rockchip.yml`: Rockchip MPP/RGA device override for ARM NAS systems.
 - `.github/workflows/docker-ghcr.yml`: multi-arch GHCR image publishing.
 - `docs/PRD-vid2audio.md`: product requirements and design reference.
 
@@ -73,24 +70,6 @@ Run with Docker:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Run with Intel iGPU / VAAPI / QSV devices exposed:
-
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.intel-vaapi.yml up --build
-```
-
-Run with NVIDIA GPU devices exposed:
-
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.nvidia.yml up --build
-```
-
-Run with Rockchip MPP/RGA devices exposed:
-
-```bash
-docker compose -f docker/docker-compose.yml -f docker/docker-compose.rockchip.yml up --build
-```
-
 ## Development Notes
 
 - Prefer small, focused changes that preserve the current lightweight stack: Axum, SQLite, static Vue UI, FFmpeg.
@@ -98,14 +77,6 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.rockchip.ym
 - The local machine may not have `ffmpeg` or `ffprobe`; code should fail with clear messages and continue where possible. The Docker image installs FFmpeg.
 - File browsing is intentionally filesystem-based for NAS use. Keep filtering rules centralized around settings: video extension allowlist, ignored extensions, and minimum file size.
 - Audio track `index` maps to the FFmpeg stream index, so extraction and preview should use `-map 0:{index}`.
-- Hardware acceleration must be conservative:
-  - Default to `auto`.
-  - Resolve `auto` through `ffmpeg -hwaccels`.
-  - Detect Rockchip `rkmpp` through `ffmpeg -decoders`, because it is codec-based rather than a generic `-hwaccel` flag.
-  - Prefer normal operation over speed.
-  - Always keep CPU fallback unless a future setting explicitly disables it.
-  - Record fallback events in job summaries.
-  - Keep the base compose portable; put hardware device mounts in override files.
 - Story-player ordering is a core feature. Preserve zero-padded filenames and keep `sorter.rs` tests passing.
 
 ## API Surface
@@ -123,13 +94,13 @@ Base URL: `/api/v1`
 - `GET /settings`
 - `PUT /settings`
 - `GET /system/status`
-- `GET /system/hardware-acceleration`
 
 ## Docker and Publishing
 
 GitHub Actions builds and publishes multi-arch images to:
 
 ```text
+ghcr.io/wenfer/vid2audio:vX.Y.Z
 ghcr.io/wenfer/vid2audio:latest
 ```
 
@@ -140,7 +111,7 @@ Supported platforms:
 
 Workflow triggers:
 
-- Push to `main`
+- Tags matching `v*.*.*`; the tag must match `backend/Cargo.toml`
 - Pull requests to `main` build only, without pushing
 - Manual `workflow_dispatch`
 
@@ -149,8 +120,8 @@ GHCR authentication:
 - The workflow uses `GITHUB_TOKEN` by default and requests `packages: write`.
 - If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
 - For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
-- The default Dockerfile bundles Debian FFmpeg and ffprobe. Host binary mounts are only needed for custom hardware-enabled FFmpeg builds.
-- The runtime image contains the stripped Rust binary, Vue output, and Debian FFmpeg. Only the `latest` tag is published, with amd64 and arm64 variants.
+- The default Dockerfile bundles Debian FFmpeg and ffprobe.
+- The runtime image contains the stripped Rust binary, Vue output, and Debian FFmpeg. Versioned and `latest` tags point to the same amd64/arm64 manifest.
 
 ## Before Finishing a Change
 

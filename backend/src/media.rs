@@ -1,7 +1,7 @@
 use crate::models::AudioTrack;
 use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
-use std::{collections::HashSet, path::Path, process::Command};
+use serde_json::Value;
+use std::{path::Path, process::Command};
 
 pub fn command_available(name: &str) -> bool {
     std::env::var_os("PATH").is_some_and(|paths| {
@@ -95,133 +95,6 @@ fn language_name(code: &str) -> String {
     .into()
 }
 
-pub fn detect_hardware_acceleration() -> Value {
-    if !command_available("ffmpeg") {
-        return json!({"available": false, "supported": [], "backends": [], "recommended": "safe", "note": "未找到 ffmpeg。本地运行请先安装 FFmpeg；默认 Docker 镜像已内置。", "ffmpeg_version": null});
-    }
-    let version_output = Command::new("ffmpeg").arg("-version").output().ok();
-    let version_text = version_output
-        .as_ref()
-        .map(|o| String::from_utf8_lossy(&o.stdout))
-        .unwrap_or_default();
-    let version = version_text
-        .lines()
-        .find(|line| line.starts_with("ffmpeg version"))
-        .and_then(|line| line.split_whitespace().nth(2));
-    let accel_output = Command::new("ffmpeg")
-        .args(["-hide_banner", "-hwaccels"])
-        .output()
-        .ok();
-    let accel_text = accel_output
-        .as_ref()
-        .map(|o| String::from_utf8_lossy(&o.stdout))
-        .unwrap_or_default();
-    let mut supported: Vec<String> = accel_text
-        .lines()
-        .map(str::trim)
-        .filter(|v| !v.is_empty() && !v.to_lowercase().starts_with("hardware"))
-        .map(str::to_string)
-        .collect();
-    let decoder_output = Command::new("ffmpeg")
-        .args(["-hide_banner", "-decoders"])
-        .output()
-        .ok();
-    if decoder_output.as_ref().is_some_and(|o| {
-        String::from_utf8_lossy(&o.stdout)
-            .to_lowercase()
-            .contains("rkmpp")
-    }) {
-        supported.push("rkmpp".into());
-    }
-    let mut seen = HashSet::new();
-    supported.retain(|v| seen.insert(v.clone()));
-    let preferred = ["qsv", "vaapi", "cuda", "rkmpp", "videotoolbox"]
-        .into_iter()
-        .find(|candidate| supported.iter().any(|v| v.eq_ignore_ascii_case(candidate)))
-        .unwrap_or("safe");
-    let definitions = [
-        (
-            "safe",
-            "CPU 软解",
-            "纯 CPU 处理，兼容性最好，适合所有环境",
-            "cpu",
-            "",
-        ),
-        (
-            "qsv",
-            "Intel QSV",
-            "Intel 核显加速，适合 Intel NAS 和 PC",
-            "chip",
-            "/dev/dri/renderD128",
-        ),
-        (
-            "vaapi",
-            "VAAPI",
-            "Linux 通用视频加速接口，支持 Intel/AMD GPU",
-            "chip",
-            "/dev/dri/renderD128",
-        ),
-        (
-            "cuda",
-            "NVIDIA CUDA",
-            "NVIDIA 显卡加速，需要 NVIDIA Container Toolkit",
-            "gpu",
-            "",
-        ),
-        (
-            "rkmpp",
-            "Rockchip MPP",
-            "瑞芯微 ARM SoC 硬件解码，适合 ARM NAS",
-            "arm",
-            "/dev/mpp_service",
-        ),
-        (
-            "videotoolbox",
-            "Apple VideoToolbox",
-            "macOS 原生硬件加速",
-            "apple",
-            "",
-        ),
-    ];
-    let backends: Vec<Value> = definitions.into_iter().map(|(id, name, description, icon, device)| json!({
-        "id": id, "name": name, "description": description, "icon": icon,
-        "detected": id == "safe" || supported.iter().any(|v| v.eq_ignore_ascii_case(id)),
-        "is_recommended": id == preferred, "device_hint": device,
-        "note": if id == "safe" { "音频提取主要处理音频流，CPU 模式通常已足够快" } else if id == "rkmpp" { "基于编解码器的加速，音频提取时不强制视频解码" } else { "" }
-    })).collect();
-    let note = if preferred == "safe" {
-        "音频提取主要处理音频流，建议保持安全模式。"
-    } else {
-        "检测到可用硬件后端；失败时会按配置回退 CPU。"
-    };
-    json!({"available": !supported.is_empty(), "supported": supported, "backends": backends, "recommended": preferred, "note": note, "ffmpeg_version": version})
-}
-
-pub fn resolve_hardware_acceleration(mode: &str) -> String {
-    if !mode.eq_ignore_ascii_case("auto") {
-        return mode.to_lowercase();
-    }
-    detect_hardware_acceleration()["recommended"]
-        .as_str()
-        .unwrap_or("safe")
-        .into()
-}
-
-pub fn acceleration_args(mode: &str, device: &str) -> Vec<String> {
-    let mode = resolve_hardware_acceleration(mode);
-    match mode.as_str() {
-        "vaapi" => {
-            let mut args = vec!["-hwaccel".into(), "vaapi".into()];
-            if !device.is_empty() {
-                args.extend(["-hwaccel_device".into(), device.into()]);
-            }
-            args
-        }
-        "qsv" | "cuda" | "videotoolbox" | "dxva2" | "d3d11va" => vec!["-hwaccel".into(), mode],
-        _ => vec![],
-    }
-}
-
 pub fn last_error(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes)
         .lines()
@@ -234,23 +107,4 @@ pub fn last_error(bytes: &[u8]) -> String {
         .chars()
         .rev()
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn explicit_acceleration_args() {
-        assert_eq!(acceleration_args("qsv", ""), ["-hwaccel", "qsv"]);
-        assert_eq!(
-            acceleration_args("vaapi", "/dev/dri/renderD128"),
-            [
-                "-hwaccel",
-                "vaapi",
-                "-hwaccel_device",
-                "/dev/dri/renderD128"
-            ]
-        );
-        assert!(acceleration_args("rkmpp", "").is_empty());
-    }
 }

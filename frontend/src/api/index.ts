@@ -52,11 +52,6 @@ export const api = {
   deleteJob: (id: string) => request(`/extract/jobs/${id}`, { method: 'DELETE' }),
   cancelJob: (id: string) => request(`/extract/jobs/${id}/cancel`, { method: 'POST' }),
 
-  // System
-  getHardwareAcceleration: () => request<import('../types').HardwareAccelInfo>('/system/hardware-acceleration'),
-  redetectHardwareAcceleration: () =>
-    request<import('../types').HardwareAccelInfo>('/system/hardware-acceleration/detect', { method: 'POST' }),
-
   // Preview
   previewUrl: (videoId: string, track: number, start: number) =>
     `${BASE}/preview/${videoId}?track=${track}&duration=10&start=${start}&_=${Date.now()}`,

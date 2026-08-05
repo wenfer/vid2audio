@@ -55,9 +55,6 @@ export interface AppSettings {
   padding_digits: string
   filesystem_sorting: string
   ffmpeg_threads: number
-  hardware_acceleration: string
-  hardware_acceleration_device: string
-  hardware_acceleration_fallback: boolean
 }
 
 export interface BrowserEntry {
@@ -107,24 +104,4 @@ export interface ExtractJobItem {
 
 export interface ExtractJobDetail extends ExtractJob {
   items: ExtractJobItem[]
-}
-
-export interface HardwareAccelBackend {
-  id: string
-  name: string
-  description: string
-  icon: string
-  detected: boolean
-  is_recommended: boolean
-  device_hint?: string
-  note?: string
-}
-
-export interface HardwareAccelInfo {
-  available: boolean
-  supported: string[]
-  backends: HardwareAccelBackend[]
-  recommended: string
-  note: string
-  ffmpeg_version?: string
 }

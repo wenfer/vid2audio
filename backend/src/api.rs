@@ -90,12 +90,7 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
             get(job_audio),
         )
         .route("/preview/{video_id}", get(preview_audio))
-        .route("/system/status", get(system_status))
-        .route("/system/hardware-acceleration", get(hardware_acceleration))
-        .route(
-            "/system/hardware-acceleration/detect",
-            post(hardware_acceleration),
-        );
+        .route("/system/status", get(system_status));
     Router::new()
         .nest("/api/v1", api)
         .nest_service("/static", ServeDir::new(&static_dir))
@@ -563,18 +558,9 @@ async fn preview_audio(
         .await?
         .ok_or_else(|| ApiError::not_found("视频不存在"))?;
     let source: String = row.get(0);
-    let settings = state.db.load_settings().await?;
     let output =
         PathBuf::from("/tmp/vid2audio").join(format!("preview_{video_id}_{}.mp3", query.track));
-    extractor::preview(
-        &source,
-        query.track,
-        &output,
-        query.duration,
-        query.start,
-        &settings,
-    )
-    .await?;
+    extractor::preview(&source, query.track, &output, query.duration, query.start).await?;
     stream_file(output, headers).await
 }
 
@@ -587,13 +573,10 @@ async fn stream_file(path: PathBuf, headers: HeaderMap) -> ApiResult<Response> {
     let response = ServeFile::new(path).oneshot(request).await?;
     Ok(response.map(Body::new))
 }
-async fn hardware_acceleration() -> Json<Value> {
-    Json(media::detect_hardware_acceleration())
-}
 async fn system_status(State(state): State<Arc<AppState>>) -> ApiResult<Json<Value>> {
     let settings = state.db.load_settings().await?;
     Ok(Json(
-        json!({"version": env!("CARGO_PKG_VERSION"), "ffmpeg_available": media::command_available("ffmpeg"), "ffprobe_available": media::command_available("ffprobe"), "database_path": state.db.path, "input_directories": settings.scan_directories, "output_directory": settings.output_directory, "hardware_acceleration": media::detect_hardware_acceleration()}),
+        json!({"version": env!("CARGO_PKG_VERSION"), "ffmpeg_available": media::command_available("ffmpeg"), "ffprobe_available": media::command_available("ffprobe"), "database_path": state.db.path, "input_directories": settings.scan_directories, "output_directory": settings.output_directory}),
     ))
 }
 fn canonical(path: &Path) -> String {

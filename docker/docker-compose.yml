@@ -26,7 +26,3 @@ services:
       - VID2AUDIO_OUTPUT=/app/output
       - VID2AUDIO_STATIC=/app/static
       - VID2AUDIO_BIND=0.0.0.0:8000
-      # The app's "auto" mode uses CPU unless an override exposes a device.
-      - VID2AUDIO_HWACCEL=auto
-      - VID2AUDIO_HWACCEL_DEVICE=
-      - VID2AUDIO_HWACCEL_FALLBACK=true

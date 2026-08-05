@@ -98,6 +98,11 @@ impl Database {
                 .await?;
             }
         }
+        sqlx::query(
+            "DELETE FROM settings WHERE key IN ('hardware_acceleration', 'hardware_acceleration_device', 'hardware_acceleration_fallback')",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -128,27 +133,6 @@ impl Database {
             && let Ok(value) = std::env::var("VID2AUDIO_OUTPUT")
         {
             object.insert("output_directory".into(), Value::String(value));
-        }
-        if !persisted.contains("hardware_acceleration")
-            && let Ok(value) = std::env::var("VID2AUDIO_HWACCEL")
-        {
-            object.insert("hardware_acceleration".into(), Value::String(value));
-        }
-        if !persisted.contains("hardware_acceleration_device")
-            && let Ok(value) = std::env::var("VID2AUDIO_HWACCEL_DEVICE")
-        {
-            object.insert("hardware_acceleration_device".into(), Value::String(value));
-        }
-        if !persisted.contains("hardware_acceleration_fallback")
-            && let Ok(value) = std::env::var("VID2AUDIO_HWACCEL_FALLBACK")
-        {
-            object.insert(
-                "hardware_acceleration_fallback".into(),
-                Value::Bool(matches!(
-                    value.to_lowercase().as_str(),
-                    "1" | "true" | "yes" | "on"
-                )),
-            );
         }
         Ok(serde_json::from_value(Value::Object(object))?)
     }

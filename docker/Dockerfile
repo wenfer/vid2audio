@@ -1,19 +1,37 @@
-# syntax=docker/dockerfile:1
+# syntax=docker/dockerfile:1.7
 
 FROM node:20-bookworm-slim AS frontend
 WORKDIR /workspace
 COPY frontend/package.json frontend/package-lock.json frontend/
-RUN --mount=type=cache,target=/root/.npm npm ci --prefix frontend
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefix frontend --prefer-offline --no-audit
 COPY frontend frontend
 RUN npm run --prefix frontend build
 
 FROM rust:1-bookworm AS backend
 WORKDIR /workspace/backend
+ENV CARGO_TERM_COLOR=never \
+    CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+
+# Compile dependencies in a source-independent layer. Application-only
+# changes can then reuse the expensive dependency build.
 COPY backend/Cargo.toml backend/Cargo.lock ./
+RUN mkdir -p src && printf 'fn main() {}\n' > src/main.rs
+RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
+    --mount=type=cache,target=/workspace/backend/target \
+    cargo build --locked --release \
+    && rm -f target/release/vid2audio \
+        target/release/vid2audio.d \
+        target/release/deps/vid2audio-*
+
 COPY backend/src ./src
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/usr/local/cargo/git \
     --mount=type=cache,target=/workspace/backend/target \
-    cargo build --locked --release && cp target/release/vid2audio /tmp/vid2audio
+    touch src/main.rs \
+    && cargo build --locked --release \
+    && cp target/release/vid2audio /tmp/vid2audio
 
 FROM debian:bookworm-slim
 WORKDIR /app

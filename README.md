@@ -14,7 +14,6 @@
 - NTFS/FAT 兼容排序、自然排序、前导零适配与排序验证
 - 任务进度、逐文件结果、成功/失败数量和失败原因简报
 - 全局最小文件大小、视频后缀白名单和过滤后缀配置
-- 硬件加速能力检测，默认自动选择 QSV/VAAPI/CUDA/Rockchip MPP/VideoToolbox，失败自动回退 CPU
 - SQLite 持久化
 - Docker 与 docker-compose 部署文件
 
@@ -48,19 +47,6 @@ cd ../frontend
 npm run build
 ```
 
-## 硬件加速策略
-
-音频提取通常不需要解码视频画面，硬件视频解码对多数任务收益有限。Vid2Audio 默认使用“自动选择”，检测到合适后端时会尝试启用；不可用或失败时回退 CPU，优先保证 NAS 和 Docker 环境稳定运行。
-
-也可以在 Web UI 的“全局配置”中手动选择：
-
-- Intel NAS: `qsv` 或 `vaapi`
-- NVIDIA GPU: `cuda`
-- Rockchip ARM NAS: `rkmpp`
-- macOS 本机调试: `videotoolbox`
-
-如果启用后 FFmpeg 失败，任务会自动用 CPU 重试，并在任务简报中记录回退原因。
-
 ## Docker 运行
 
 默认镜像基于 `debian:bookworm-slim`，包含 Rust 服务以及 Debian 提供的 `ffmpeg`/`ffprobe`，AMD64 和 ARM64 平台拉取后即可使用，不需要宿主机安装或挂载 FFmpeg。
@@ -91,55 +77,6 @@ docker run -d --name vid2audio -p 8000:8000 \
 ```
 
 `latest` 是唯一发布标签，内含 `linux/amd64` 和 `linux/arm64` 两个架构变体。Docker 会按宿主机架构自动拉取对应镜像。
-
-### 自定义硬件加速 FFmpeg
-
-Debian 标准 FFmpeg 足以完成普通音频提取。如果 Rockchip 等平台需要厂商定制的 FFmpeg，可以自行构建镜像或挂载与 Debian 12 兼容的 ARM64 二进制及其动态库。
-
-### 硬件加速 override
-
-默认 compose 不挂载任何硬件设备，保证不支持硬件加速的 NAS 也能正常启动。确认主机支持后，可以叠加 override：
-
-Intel iGPU / VAAPI / QSV：
-
-```bash
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.intel-vaapi.yml \
-  up --build
-```
-
-NVIDIA GPU：
-
-```bash
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.nvidia.yml \
-  up --build
-```
-
-Rockchip ARM / RK356x / RK3588：
-
-```bash
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.rockchip.yml \
-  up --build
-```
-
-Rockchip 需要宿主机暴露 MPP/RGA 设备，并且宿主机 FFmpeg 具备 `rkmpp` 解码器。不同 NAS 系统设备节点不完全一致，如果容器启动时报某个 `/dev/...` 不存在，可以在 override 文件中注释掉缺失设备。
-
-启动后可在容器内确认 FFmpeg 支持项：
-
-```bash
-docker compose exec vid2audio ffmpeg -hide_banner -hwaccels
-```
-
-硬件加速通过环境变量控制：
-
-- `VID2AUDIO_HWACCEL=auto|safe|qsv|vaapi|cuda|rkmpp|videotoolbox`
-- `VID2AUDIO_HWACCEL_DEVICE=/dev/dri/renderD128`
-- `VID2AUDIO_HWACCEL_FALLBACK=true`
 
 ## 排序和 TTS
 
@@ -181,18 +118,19 @@ volumes:
 
 ## GHCR 镜像
 
-推送到 `main` 分支时，GitHub Actions 会构建一个 `latest` 多架构标签，其中仅包含两个镜像变体：
+发布 `vX.Y.Z` Git 标签时，GitHub Actions 会校验它与 Cargo 版本一致，并行构建两个原生架构：
 
 - `linux/amd64`
 - `linux/arm64`
 
-唯一镜像标签：
+每个版本发布两个可读标签，它们指向同一份多架构 manifest，不会重复构建镜像：
 
 ```text
+ghcr.io/wenfer/vid2audio:v0.2.0
 ghcr.io/wenfer/vid2audio:latest
 ```
 
-两个架构变体均内置 Debian FFmpeg，不再发布提交哈希或 `-ffmpeg` 别名。Docker 会根据 x86_64 或 ARM64 宿主机自动选择正确变体。
+版本规范统一为：Cargo 与前端使用 `X.Y.Z`，Git 和镜像使用 `vX.Y.Z`。版本标签用于固定生产部署，`latest` 指向最新发布；不再生成提交哈希或 `-ffmpeg` 标签。Docker 会根据 x86_64 或 ARM64 宿主机自动选择正确变体。
 
 如果 Actions 在推送阶段报 `permission_denied: write_package`，优先检查仓库设置：
 

@@ -1,9 +1,6 @@
 use crate::{
     db::Database,
-    media::{
-        acceleration_args, command_available, last_error, require_command,
-        resolve_hardware_acceleration,
-    },
+    media::{command_available, last_error, require_command},
     models::{AppSettings, Collection, ExtractRequest},
     sorter::{
         calculate_padding, compare_names, generate_filename, intro_filename, sanitize_filename_part,
@@ -13,7 +10,7 @@ use tokio::sync::Semaphore;
 
 static JOB_LIMIT: Semaphore = Semaphore::const_new(2);
 use anyhow::{Context, Result, bail};
-use serde_json::{Value, json};
+use serde_json::json;
 use sqlx::Row;
 use std::{
     ffi::OsString,
@@ -79,14 +76,7 @@ async fn run_job_inner(
         "lossless" => "320k",
         _ => "128k",
     };
-    let resolved_accel = resolve_hardware_acceleration(
-        request
-            .hardware_acceleration
-            .as_deref()
-            .unwrap_or(&settings.hardware_acceleration),
-    );
     let mut warnings = Vec::new();
-    let mut fallback_events = Vec::new();
     let mut output_files = Vec::new();
     let mut failures = Vec::new();
 
@@ -146,15 +136,11 @@ async fn run_job_inner(
             video.duration,
             request.trim_start_seconds,
             request.trim_end_seconds,
-            &resolved_accel,
             settings,
         )
         .await
         {
-            Ok(event) => {
-                if let Some(event) = event {
-                    fallback_events.push(event);
-                }
+            Ok(()) => {
                 output_files.push(output_name);
                 sqlx::query("UPDATE extract_job_items SET status='completed',output_path=?,completed_at=CURRENT_TIMESTAMP WHERE job_id=? AND video_file_id=?").bind(output_path.to_string_lossy().as_ref()).bind(job_id).bind(&video.id).execute(&db.pool).await?;
             }
@@ -180,7 +166,7 @@ async fn run_job_inner(
     } else {
         "failed"
     };
-    let summary = json!({"output_files": output_files, "failures": failures, "warnings": warnings, "success_count": success_count, "failure_count": failure_count, "total_count": total_count, "hardware_acceleration": {"requested": request.hardware_acceleration.as_deref().unwrap_or(&settings.hardware_acceleration), "resolved": resolved_accel, "fallback_events": fallback_events, "note": "自动模式会选择当前 FFmpeg 推荐后端；不可用或失败时按配置回退 CPU。"}});
+    let summary = json!({"output_files": output_files, "failures": failures, "warnings": warnings, "success_count": success_count, "failure_count": failure_count, "total_count": total_count});
     sqlx::query("UPDATE extract_jobs SET status=?,progress=100,current_file=?,output_path=?,success_count=?,failure_count=?,summary=?,completed_at=CURRENT_TIMESTAMP WHERE id=? AND status='processing'")
         .bind(final_status).bind(format!("完成: 成功 {success_count}，失败 {failure_count}")).bind(output_dir.to_string_lossy().as_ref()).bind(success_count).bind(failure_count).bind(summary.to_string()).bind(job_id).execute(&db.pool).await?;
     sqlx::query(
@@ -235,9 +221,8 @@ async fn extract_one(
     duration: Option<f64>,
     trim_start: f64,
     trim_end: f64,
-    acceleration: &str,
     settings: &AppSettings,
-) -> Result<Option<Value>> {
+) -> Result<()> {
     if let Some(duration) = duration {
         if duration - trim_start - trim_end <= 0.0 {
             bail!("裁剪范围无效：开头与结尾裁剪之和超过视频时长");
@@ -250,8 +235,6 @@ async fn extract_one(
     if trim_start > 0.0 {
         args.extend(["-ss".into(), trim_start.to_string().into()]);
     }
-    let hw_args = acceleration_args(acceleration, &settings.hardware_acceleration_device);
-    args.extend(hw_args.iter().map(Into::into));
     args.extend([
         "-i".into(),
         source.clone().into(),
@@ -278,18 +261,7 @@ async fn extract_one(
         settings.ffmpeg_threads.to_string().into(),
         output.as_os_str().into(),
     ]);
-    let first = run_command("ffmpeg", args.clone(), None).await;
-    if let Err(error) = first {
-        if !settings.hardware_acceleration_fallback || hw_args.is_empty() {
-            return Err(error);
-        }
-        let fallback_args = remove_hwaccel_args(args);
-        run_command("ffmpeg", fallback_args, None).await?;
-        return Ok(Some(
-            json!({"source": source, "output": output, "mode": acceleration, "requested_mode": acceleration, "message": format!("{acceleration} 失败，已自动回退到 CPU。"), "reason": error.to_string()}),
-        ));
-    }
-    Ok(None)
+    run_command("ffmpeg", args, None).await
 }
 
 pub async fn preview(
@@ -298,19 +270,15 @@ pub async fn preview(
     output: &Path,
     duration: i64,
     start: f64,
-    settings: &AppSettings,
 ) -> Result<()> {
     require_command("ffmpeg")?;
     if let Some(parent) = output.parent() {
         tokio::fs::create_dir_all(parent).await?;
     }
-    let mode = resolve_hardware_acceleration(&settings.hardware_acceleration);
     let mut args: Vec<OsString> = vec!["-y".into()];
     if start > 0.0 {
         args.extend(["-ss".into(), start.to_string().into()]);
     }
-    let hw = acceleration_args(&mode, &settings.hardware_acceleration_device);
-    args.extend(hw.iter().map(Into::into));
     args.extend([
         "-i".into(),
         source.into(),
@@ -324,14 +292,7 @@ pub async fn preview(
         "128k".into(),
         output.as_os_str().into(),
     ]);
-    if let Err(error) = run_command("ffmpeg", args.clone(), None).await {
-        if settings.hardware_acceleration_fallback && !hw.is_empty() {
-            run_command("ffmpeg", remove_hwaccel_args(args), None).await?;
-        } else {
-            return Err(error);
-        }
-    }
-    Ok(())
+    run_command("ffmpeg", args, None).await
 }
 
 async fn generate_intro(
@@ -519,25 +480,4 @@ async fn run_command(
     })
     .await??;
     Ok(())
-}
-
-fn remove_hwaccel_args(args: Vec<OsString>) -> Vec<OsString> {
-    let mut result = Vec::new();
-    let mut skip = false;
-    for arg in args {
-        if skip {
-            skip = false;
-            continue;
-        }
-        let value = arg.to_string_lossy();
-        if matches!(
-            value.as_ref(),
-            "-hwaccel" | "-hwaccel_device" | "-hwaccel_output_format"
-        ) {
-            skip = true;
-        } else {
-            result.push(arg);
-        }
-    }
-    result
 }

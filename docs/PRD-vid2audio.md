@@ -1,6 +1,6 @@
 # Vid2Audio 产品与实现说明
 
-> 当前版本：0.1.0
+> 当前版本：0.2.0
 >
 > 目标平台：Docker、Linux AMD64/ARM64、NAS 设备
 > 本文只描述仓库当前实现和必须保持的产品约束。
@@ -40,8 +40,8 @@ Rust + Axum + Tokio
 - `backend/src/api.rs`：REST API、静态资源、音频 Range 响应。
 - `backend/src/db.rs`：SQLite schema、兼容迁移和读写。
 - `backend/src/scanner.rs`：递归扫描、过滤和合集分组。
-- `backend/src/media.rs`：ffprobe 解析和硬件加速检测。
-- `backend/src/extractor.rs`：FFmpeg、TTS、进度和 CPU 回退。
+- `backend/src/media.rs`：ffprobe 媒体与音轨解析。
+- `backend/src/extractor.rs`：FFmpeg、TTS 和任务进度。
 - `backend/src/sorter.rs`：集数解析、标题清理和文件名排序。
 - `backend/src/models.rs`：Serde API 模型。
 
@@ -110,8 +110,7 @@ queued → processing → completed | failed | cancelled
 2. 根据集数和文件系统策略排序。
 3. 可选生成 Piper 或静音片头。
 4. 逐文件调用 FFmpeg，更新进度和当前文件。
-5. 硬件加速失败时按设置回退 CPU，并记录回退事件。
-6. 保存成功数、失败数、输出文件和错误摘要。
+5. 保存成功数、失败数、输出文件和错误摘要。
 
 取消任务会立即保存 `cancelled` 状态；正在运行的单次 FFmpeg 调用完成后，后台循环停止处理后续文件。运行中的任务不能直接删除，必须先取消。
 
@@ -158,8 +157,6 @@ GET    /preview/{video_id}?track=...&duration=...&start=...
 GET    /settings
 PUT    /settings
 GET    /system/status
-GET    /system/hardware-acceleration
-POST   /system/hardware-acceleration/detect
 ```
 
 音频响应支持 HTTP Range，保证浏览器能够拖动播放进度。
@@ -187,9 +184,6 @@ VID2AUDIO_INPUT
 VID2AUDIO_OUTPUT
 VID2AUDIO_STATIC
 VID2AUDIO_BIND
-VID2AUDIO_HWACCEL
-VID2AUDIO_HWACCEL_DEVICE
-VID2AUDIO_HWACCEL_FALLBACK
 RUST_LOG
 ```
 
@@ -204,17 +198,15 @@ RUST_LOG
 默认 GHCR 镜像内置 `ffmpeg` 和 `ffprobe`，不需要挂载宿主机二进制：
 
 ```text
+ghcr.io/wenfer/vid2audio:v0.2.0
 ghcr.io/wenfer/vid2audio:latest
 ```
 
-只发布 `latest` 标签，不再生成提交哈希或 `-ffmpeg` 别名。该标签包含 `linux/amd64` 和 `linux/arm64` 两个架构变体，Docker 会按宿主机架构自动选择。
-
-Intel、NVIDIA、Rockchip 设备映射分别保存在对应 Compose override 中。Debian 标准 FFmpeg 不保证包含厂商定制的 Rockchip `rkmpp` 解码器。
+版本遵循 SemVer：Cargo 与前端为 `X.Y.Z`，Git 标签与镜像标签为 `vX.Y.Z`。发布工作流校验两者一致，并同时更新 `latest`。两个标签指向同一份 `linux/amd64`、`linux/arm64` manifest，不生成提交哈希或 `-ffmpeg` 别名。
 
 ## 10. 必须保持的质量约束
 
 - FFmpeg/ffprobe 缺失时返回清晰错误，服务本身继续运行。
-- 硬件加速默认 `auto`，始终保留 CPU 回退。
 - 不得把输入目录写入容器；视频挂载保持只读。
 - 不得允许合集名或任务名逃逸输出根目录。
 - 重新扫描和删除合集不得破坏运行中的任务。

@@ -1,23 +1,11 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref } from 'vue'
 import { useSettings } from '../composables/useSettings'
 import { useToast } from '../composables/useToast'
-import { api } from '../api'
-import type { HardwareAccelInfo } from '../types'
 
 const { settings, save } = useSettings()
 const { show: showToast } = useToast()
-const accelInfo = ref<HardwareAccelInfo | null>(null)
 const saving = ref(false)
-
-onMounted(async () => {
-  accelInfo.value = await api.getHardwareAcceleration()
-})
-
-async function redetect() {
-  accelInfo.value = await api.redetectHardwareAcceleration()
-  showToast('硬件加速检测完成', 'success')
-}
 
 async function saveSettings() {
   if (!settings.value) return
@@ -81,40 +69,6 @@ async function saveSettings() {
         </div>
       </fieldset>
 
-      <!-- Hardware Acceleration -->
-      <fieldset class="settings-group">
-        <legend>硬件加速</legend>
-        <div v-if="accelInfo" class="accel-panel">
-          <div class="accel-status">
-            <span class="status-dot" :class="accelInfo.available ? 'available' : 'unavailable'"></span>
-            <span>{{ accelInfo.available ? `${accelInfo.supported.length} 个后端可用` : '未检测到' }}</span>
-            <span class="text-muted text-sm" style="margin-left:auto">{{ accelInfo.ffmpeg_version ? `FFmpeg ${accelInfo.ffmpeg_version}` : '' }}</span>
-            <button class="btn btn-ghost btn-sm" @click="redetect">🔄 重新检测</button>
-          </div>
-          <div class="backends-grid">
-            <div v-for="b in accelInfo.backends" :key="b.id" class="backend-card" :class="{ detected: b.detected, recommended: b.is_recommended }">
-              <div class="backend-name">{{ b.name }}</div>
-              <div class="backend-desc">{{ b.description }}</div>
-              <span v-if="b.is_recommended" class="backend-tag rec">推荐</span>
-              <span v-else-if="b.detected" class="backend-tag ok">可用</span>
-              <span v-else class="backend-tag na">未检测到</span>
-            </div>
-          </div>
-          <p class="hint-text">{{ accelInfo.note }}</p>
-        </div>
-        <div class="form-row">
-          <label class="form-field"><span class="field-label">加速策略</span>
-            <select v-model="settings.hardware_acceleration">
-              <option value="auto">自动（推荐）</option><option value="safe">CPU</option>
-              <option value="qsv">Intel QSV</option><option value="vaapi">VAAPI</option>
-              <option value="cuda">NVIDIA CUDA</option><option value="rkmpp">Rockchip MPP</option>
-              <option value="videotoolbox">VideoToolbox</option>
-            </select>
-          </label>
-          <label class="form-field"><span class="field-label">设备路径</span><input v-model="settings.hardware_acceleration_device" placeholder="可留空" /></label>
-        </div>
-      </fieldset>
-
       <!-- TTS -->
       <fieldset class="settings-group">
         <legend>TTS 片头</legend>
@@ -149,23 +103,4 @@ async function saveSettings() {
 .settings-sections { display: flex; flex-direction: column; gap: 20px; }
 .settings-group { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; margin: 0; }
 .settings-group legend { font-size: 13px; font-weight: 600; padding: 0 8px; }
-.accel-panel { margin-bottom: 16px; }
-.accel-status { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; font-size: 13px; font-weight: 500; }
-.status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--text-muted); }
-.status-dot.available { background: var(--success); }
-.status-dot.unavailable { background: var(--warning); }
-.backends-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 8px; margin-bottom: 10px; }
-.backend-card {
-  position: relative; padding: 10px; border: 1px solid var(--border);
-  border-radius: var(--radius-sm); background: var(--bg-elevated); opacity: 0.5;
-}
-.backend-card.detected { opacity: 1; border-color: var(--success); background: var(--success-soft); }
-.backend-card.recommended { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
-.backend-name { font-size: 12px; font-weight: 600; }
-.backend-desc { font-size: 11px; color: var(--text-muted); margin-top: 2px; }
-.backend-tag { position: absolute; top: 4px; right: 6px; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 999px; }
-.backend-tag.rec { background: var(--accent-soft); color: var(--accent-text); }
-.backend-tag.ok { background: var(--success-soft); color: var(--success-text); }
-.backend-tag.na { background: var(--bg-inset); color: var(--text-muted); }
-.hint-text { font-size: 12px; color: var(--text-muted); margin-top: 8px; }
 </style>
