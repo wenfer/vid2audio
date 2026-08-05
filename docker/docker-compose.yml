@@ -8,33 +8,25 @@ services:
       dockerfile: docker/Dockerfile
     container_name: vid2audio
     restart: unless-stopped
-    working_dir: /app
     ports:
       - "8000:8000"
     volumes:
       - /nas/media/videos:/app/input:ro
       - /nas/media/audio-output:/app/output
       - ../data:/app/data
-      # Mount host ffmpeg/ffprobe binaries into the container.
-      # Adjust paths to match your system. Common locations:
-      #   Linux:  /usr/bin/ffmpeg, /usr/bin/ffprobe
-      #   NAS:    /usr/local/bin/ffmpeg, /usr/local/bin/ffprobe
-      # The container adds /app/bin to PATH so these will be found automatically.
-      - /usr/bin/ffmpeg:/app/bin/ffmpeg:ro
-      - /usr/bin/ffprobe:/app/bin/ffprobe:ro
+      # FFmpeg and ffprobe are bundled in the default image.
       # Optional: mount Piper TTS binary and voice models for offline TTS.
-      # Install piper: pip install piper-tts && which piper
-      # Download voice: python3 -m piper.download_voices zh_CN-huayan-medium
       # - /usr/local/bin/piper:/app/bin/piper:ro
       # - /path/to/piper-voices:/app/data/piper-voices:ro
     environment:
       - TZ=Asia/Shanghai
-      - PYTHONUNBUFFERED=1
+      - RUST_LOG=vid2audio=info,tower_http=info
       - VID2AUDIO_DB=/app/data/vid2audio.db
       - VID2AUDIO_INPUT=/app/input
       - VID2AUDIO_OUTPUT=/app/output
-      # Keep the container portable by default. The app's "auto" mode will
-      # use CPU unless a hardware acceleration override exposes a device.
+      - VID2AUDIO_STATIC=/app/static
+      - VID2AUDIO_BIND=0.0.0.0:8000
+      # The app's "auto" mode uses CPU unless an override exposes a device.
       - VID2AUDIO_HWACCEL=auto
       - VID2AUDIO_HWACCEL_DEVICE=
       - VID2AUDIO_HWACCEL_FALLBACK=true

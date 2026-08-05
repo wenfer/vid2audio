@@ -6,7 +6,7 @@ services:
     #
     # Requirements on the host:
     # - /dev/dri exists and is accessible
-    # - Host ffmpeg is built with vaapi/qsv support
+    # - The image ffmpeg reports vaapi/qsv support
     # - The container user can access render/video devices
     #
     # Verify after start:

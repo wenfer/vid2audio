@@ -7,8 +7,9 @@ services:
     # Notes:
     # - Rockchip acceleration depends on kernel MPP/RGA devices and an FFmpeg
     #   build with rkmpp decoders (h264_rkmpp, hevc_rkmpp).
-    # - The host ffmpeg must be compiled with rkmpp support; the standard
-    #   Debian/Ubuntu ffmpeg package does NOT include it.
+    # - The default Debian FFmpeg does NOT include rkmpp. Device exposure alone
+    #   does not add it; rkmpp requires a custom Vid2Audio image with a matching
+    #   FFmpeg build and Rockchip runtime libraries.
     # - Vid2Audio extracts audio streams, so hardware video decode often brings
     #   little benefit. This override only exposes devices and lets the app's
     #   auto/fallback policy keep normal CPU extraction working.

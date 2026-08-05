@@ -4,7 +4,7 @@
 
 ## 当前实现
 
-- FastAPI 后端与静态 Web UI
+- Rust/Axum 后端与 Vue 3 静态 Web UI
 - 目录扫描、合集识别、标题清理
 - 支持按文件夹或单个视频文件创建音频提取任务
 - ffprobe 音轨解析
@@ -21,16 +21,32 @@
 ## 本地运行
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=/path/to/output \
-  uvicorn backend.app.main:app --reload
+cd frontend
+npm ci
+npm run build
+
+cd ../backend
+VID2AUDIO_DB=../data/vid2audio.db \
+VID2AUDIO_INPUT=/path/to/videos \
+VID2AUDIO_OUTPUT=/path/to/output \
+cargo run
 ```
 
 打开 http://127.0.0.1:8000。
 
-本机需要安装 `ffmpeg` 和 `ffprobe` 才能解析和提取真实视频。Docker 默认通过挂载宿主机二进制文件使用 FFmpeg。
+本机直接运行需要安装 `ffmpeg` 和 `ffprobe`。默认 Docker/GHCR 镜像已经内置两者。
+
+常用检查命令：
+
+```bash
+cd backend
+cargo fmt --check
+cargo test --locked
+cargo clippy --locked --all-targets -- -D warnings
+
+cd ../frontend
+npm run build
+```
 
 ## 硬件加速策略
 
@@ -47,7 +63,7 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 
 ## Docker 运行
 
-默认镜像**不包含 FFmpeg**，通过挂载宿主机的 `ffmpeg`/`ffprobe` 二进制文件来使用。这样镜像体积更小（约 80MB vs 200MB+），且可以直接使用宿主机已编译好的硬件加速版本。
+默认镜像基于 `debian:bookworm-slim`，包含 Rust 服务以及 Debian 提供的 `ffmpeg`/`ffprobe`，AMD64 和 ARM64 平台拉取后即可使用，不需要宿主机安装或挂载 FFmpeg。
 
 先调整 [docker/docker-compose.yml](docker/docker-compose.yml) 中的路径：
 
@@ -55,9 +71,7 @@ VID2AUDIO_DB=data/vid2audio.db VID2AUDIO_INPUT=/path/to/videos VID2AUDIO_OUTPUT=
 volumes:
   - /your/videos:/app/input:ro
   - /your/output:/app/output
-  # 映射宿主机 ffmpeg（根据实际路径调整）
-  - /usr/bin/ffmpeg:/app/bin/ffmpeg:ro
-  - /usr/bin/ffprobe:/app/bin/ffprobe:ro
+  - /your/data:/app/data
 ```
 
 然后启动：
@@ -66,23 +80,21 @@ volumes:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-### 如果宿主机没有 FFmpeg
-
-使用内置 FFmpeg 的 override 文件（镜像会大 80-120MB）：
+直接拉取 GHCR 默认镜像：
 
 ```bash
-docker compose \
-  -f docker/docker-compose.yml \
-  -f docker/docker-compose.ffmpeg-bundled.yml \
-  up --build
+docker run -d --name vid2audio -p 8000:8000 \
+  -v /your/videos:/app/input:ro \
+  -v /your/output:/app/output \
+  -v /your/data:/app/data \
+  ghcr.io/wenfer/vid2audio:latest
 ```
 
-### 查找宿主机 FFmpeg 路径
+`latest` 是唯一发布标签，内含 `linux/amd64` 和 `linux/arm64` 两个架构变体。Docker 会按宿主机架构自动拉取对应镜像。
 
-```bash
-which ffmpeg ffprobe
-# 常见位置: /usr/bin/ffmpeg, /usr/local/bin/ffmpeg
-```
+### 自定义硬件加速 FFmpeg
+
+Debian 标准 FFmpeg 足以完成普通音频提取。如果 Rockchip 等平台需要厂商定制的 FFmpeg，可以自行构建镜像或挂载与 Debian 12 兼容的 ARM64 二进制及其动态库。
 
 ### 硬件加速 override
 
@@ -169,17 +181,18 @@ volumes:
 
 ## GHCR 镜像
 
-推送到 `main` 分支或 `v*.*.*` tag 时，GitHub Actions 会构建并发布多架构镜像：
+推送到 `main` 分支时，GitHub Actions 会构建一个 `latest` 多架构标签，其中仅包含两个镜像变体：
 
 - `linux/amd64`
 - `linux/arm64`
 
-镜像标签：
+唯一镜像标签：
 
 ```text
-ghcr.io/wenfer/vid2audio:<commit-id>
 ghcr.io/wenfer/vid2audio:latest
 ```
+
+两个架构变体均内置 Debian FFmpeg，不再发布提交哈希或 `-ffmpeg` 别名。Docker 会根据 x86_64 或 ARM64 宿主机自动选择正确变体。
 
 如果 Actions 在推送阶段报 `permission_denied: write_package`，优先检查仓库设置：
 

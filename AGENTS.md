@@ -2,27 +2,20 @@
 
 ## Project
 
-Vid2Audio is a NAS-friendly Docker application for turning video collections into audio packages for children's story players. It scans folders or individual video files, discovers audio tracks with `ffprobe`, extracts selected tracks with `ffmpeg`, generates ordered filenames with zero padding, and exposes a simple FastAPI-backed web UI.
+Vid2Audio is a NAS-friendly Docker application for turning video collections into audio packages for children's story players. It scans folders or individual video files, discovers audio tracks with `ffprobe`, extracts selected tracks with `ffmpeg`, generates ordered filenames with zero padding, and exposes a Rust/Axum-backed web UI.
 
 ## Repository Layout
 
-- `backend/app/main.py`: FastAPI application entrypoint and static UI mount.
-- `backend/app/api/`: REST API routers.
-  - `files.py`: file browser API for folders and selectable video files.
-  - `scan.py`: scan/analyze selected files or folders.
-  - `extract.py`: extraction jobs and preview audio.
-  - `collections.py`: analyzed collections.
-  - `settings.py`: persisted global settings.
-  - `system.py`: FFmpeg and hardware acceleration status.
-- `backend/app/core/`: media and filename logic.
-  - `scanner.py`: video discovery, grouping, filtering.
-  - `media.py`: ffprobe parsing and hardware acceleration detection.
-  - `extractor.py`: ffmpeg extraction, preview, trim offsets, fallback behavior.
-  - `sorter.py`: title cleanup and story-player-safe filename ordering.
-  - `tts_engine.py`: Piper TTS intro generation with silent fallback.
-- `backend/app/models/`: Pydantic schemas and SQLite schema/migrations.
-- `backend/app/services/`: persistence-backed business services.
-- `backend/app/static/`: Vue 3 built output (served by FastAPI).
+- `backend/`: Rust crate for the Axum API and background extraction tasks.
+  - `src/main.rs`: process entrypoint and server configuration.
+  - `src/api.rs`: REST routes, static UI mount, and audio streaming.
+  - `src/db.rs`: SQLite schema, migrations, and persistence.
+  - `src/models.rs`: Serde request/response models.
+  - `src/scanner.rs`: video discovery, grouping, and filtering.
+  - `src/media.rs`: ffprobe parsing and acceleration detection.
+  - `src/extractor.rs`: FFmpeg extraction, preview, TTS, and fallback behavior.
+  - `src/sorter.rs`: story-player-safe filename ordering.
+  - `static/`: generated Vue output, not committed.
 - `frontend/`: Vue 3 + Vite + TypeScript source code.
   - `src/api/`: API client layer.
   - `src/components/`: reusable Vue components.
@@ -30,12 +23,10 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `src/views/`: page-level view components.
   - `src/types/`: TypeScript type definitions.
   - `src/styles/`: global CSS (design tokens).
-- `backend/tests/`: pytest coverage for sorting, scanning, and acceleration helpers.
+- Rust unit and API tests live beside their modules under `backend/src/`.
 - `docker/`: Dockerfile and compose files.
-  - `Dockerfile`: multi-stage build, no FFmpeg bundled (user mounts host binaries).
-  - `Dockerfile.ffmpeg-bundled`: alternative Dockerfile that installs FFmpeg via apt.
-  - `docker-compose.yml`: portable default compose with host ffmpeg mount.
-  - `docker-compose.ffmpeg-bundled.yml`: override to use the bundled-FFmpeg image.
+  - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
+  - `docker-compose.yml`: default self-contained deployment.
   - `docker-compose.intel-vaapi.yml`: Intel iGPU / VAAPI / QSV override.
   - `docker-compose.nvidia.yml`: NVIDIA Container Toolkit override.
   - `docker-compose.rockchip.yml`: Rockchip MPP/RGA device override for ARM NAS systems.
@@ -44,18 +35,11 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 
 ## Common Commands
 
-Create local environment:
+Build and test the backend:
 
 ```bash
-python3 -m venv .venv
-. .venv/bin/activate
-pip install -r requirements.txt
-```
-
-Run tests:
-
-```bash
-.venv/bin/python -m pytest backend/tests
+cargo build --manifest-path backend/Cargo.toml
+cargo test --manifest-path backend/Cargo.toml --locked
 ```
 
 Frontend development:
@@ -64,13 +48,14 @@ Frontend development:
 cd frontend
 npm install --registry https://registry.npmmirror.com
 npm run dev    # Dev server with HMR at http://localhost:5173
-npm run build  # Build to backend/app/static/
+npm run build  # Build to backend/static/
 ```
 
 Compile check:
 
 ```bash
-.venv/bin/python -m compileall backend
+cargo check --manifest-path backend/Cargo.toml --locked
+cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets -- -D warnings
 ```
 
 Run locally:
@@ -79,7 +64,7 @@ Run locally:
 VID2AUDIO_DB=data/vid2audio.db \
 VID2AUDIO_INPUT=/path/to/videos \
 VID2AUDIO_OUTPUT=/path/to/output \
-.venv/bin/uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+cargo run --manifest-path backend/Cargo.toml
 ```
 
 Run with Docker:
@@ -108,8 +93,8 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.rockchip.ym
 
 ## Development Notes
 
-- Prefer small, focused changes that preserve the current lightweight stack: FastAPI, SQLite, plain static UI, FFmpeg.
-- Do not commit generated artifacts: `.venv/`, `data/`, `__pycache__/`, `.pytest_cache/`, local databases, or media output.
+- Prefer small, focused changes that preserve the current lightweight stack: Axum, SQLite, static Vue UI, FFmpeg.
+- Do not commit generated artifacts: `backend/target/`, `backend/static/`, `frontend/node_modules/`, `data/`, local databases, or media output.
 - The local machine may not have `ffmpeg` or `ffprobe`; code should fail with clear messages and continue where possible. The Docker image installs FFmpeg.
 - File browsing is intentionally filesystem-based for NAS use. Keep filtering rules centralized around settings: video extension allowlist, ignored extensions, and minimum file size.
 - Audio track `index` maps to the FFmpeg stream index, so extraction and preview should use `-map 0:{index}`.
@@ -121,7 +106,7 @@ docker compose -f docker/docker-compose.yml -f docker/docker-compose.rockchip.ym
   - Always keep CPU fallback unless a future setting explicitly disables it.
   - Record fallback events in job summaries.
   - Keep the base compose portable; put hardware device mounts in override files.
-- Story-player ordering is a core feature. Preserve zero-padded filenames and keep tests around `sorter.py` passing.
+- Story-player ordering is a core feature. Preserve zero-padded filenames and keep `sorter.rs` tests passing.
 
 ## API Surface
 
@@ -145,7 +130,6 @@ Base URL: `/api/v1`
 GitHub Actions builds and publishes multi-arch images to:
 
 ```text
-ghcr.io/wenfer/vid2audio:<commit-id>
 ghcr.io/wenfer/vid2audio:latest
 ```
 
@@ -157,7 +141,6 @@ Supported platforms:
 Workflow triggers:
 
 - Push to `main`
-- Tags matching `v*.*.*`
 - Pull requests to `main` build only, without pushing
 - Manual `workflow_dispatch`
 
@@ -166,17 +149,17 @@ GHCR authentication:
 - The workflow uses `GITHUB_TOKEN` by default and requests `packages: write`.
 - If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
 - For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
-- The container installs the project with `pip install /app`, so `backend` must be importable from site-packages without relying on `/app`, `PYTHONPATH`, or the current working directory.
-- The default Dockerfile does NOT bundle FFmpeg; it expects the user to mount host `ffmpeg`/`ffprobe` binaries via volumes. `Dockerfile.ffmpeg-bundled` is provided for users without host FFmpeg.
-- The Dockerfile intentionally imports `backend.app.main` from `/tmp` during image build and verifies `backend.app/static/index.html` is packaged. If this fails, fix packaging before publishing.
+- The default Dockerfile bundles Debian FFmpeg and ffprobe. Host binary mounts are only needed for custom hardware-enabled FFmpeg builds.
+- The runtime image contains the stripped Rust binary, Vue output, and Debian FFmpeg. Only the `latest` tag is published, with amd64 and arm64 variants.
 
 ## Before Finishing a Change
 
 Run at least:
 
 ```bash
-.venv/bin/python -m compileall backend
-.venv/bin/python -m pytest backend/tests
+cargo fmt --manifest-path backend/Cargo.toml -- --check
+cargo test --manifest-path backend/Cargo.toml --locked
+cargo clippy --manifest-path backend/Cargo.toml --locked --all-targets -- -D warnings
 ```
 
 If frontend files changed, rebuild:

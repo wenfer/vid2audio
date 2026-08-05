@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - main
-    tags:
-      - "v*.*.*"
   pull_request:
     branches:
       - main
@@ -18,7 +16,7 @@ env:
 
 jobs:
   docker:
-    name: Build multi-arch image
+    name: Build amd64 and arm64 image
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -48,7 +46,6 @@ jobs:
         with:
           images: ${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=${{ github.sha }}
             type=raw,value=latest,enable={{is_default_branch}}
 
       - name: Show image tags

@@ -6,7 +6,7 @@ services:
     #
     # Requirements:
     # - NVIDIA Container Toolkit installed on host
-    # - Host ffmpeg built with CUDA/NVENC support
+    # - The image ffmpeg and host driver expose compatible CUDA/NVDEC support
     # - nvidia-smi works on the host
     deploy:
       resources:

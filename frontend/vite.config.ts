@@ -5,7 +5,7 @@ export default defineConfig({
   plugins: [vue()],
   base: '/static/',
   build: {
-    outDir: '../backend/app/static',
+    outDir: '../backend/static',
     emptyOutDir: true,
   },
   server: {

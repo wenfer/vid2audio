@@ -9,17 +9,6 @@ Thumbs.db
 # Environment
 .env
 .env.*
-.venv
-venv
-
-# Python cache
-__pycache__
-*.pyc
-*.pyo
-.pytest_cache
-.mypy_cache
-.ruff_cache
-
 # Runtime data (not needed in image)
 data
 
@@ -37,9 +26,9 @@ AGENTS.md
 # Docker files themselves
 docker
 
-# Tests (not needed in production image)
-backend/tests
+# Rust build and generated frontend output
+backend/target
+backend/static
 
 # Frontend (only source needed for Docker build, node_modules excluded)
 frontend/node_modules
-frontend/dist
