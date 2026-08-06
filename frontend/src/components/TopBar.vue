@@ -34,14 +34,13 @@ const navItems = [
         <span class="nav-label">{{ item.label }}</span>
       </button>
     </nav>
-    <div class="topbar-right"></div>
+    <div class="topbar-right">
+      <button class="btn btn-primary create-task-btn" @click="showWizard = true" title="快速创建任务">
+        <span>＋</span>
+        <span>创建任务</span>
+      </button>
+    </div>
   </header>
-
-  <!-- Floating Action Button -->
-  <button class="fab" @click="showWizard = true" title="快速创建任务">
-    <span class="fab-icon">＋</span>
-    <span class="fab-label">创建任务</span>
-  </button>
 
   <WizardModal v-model:visible="showWizard" />
 </template>
@@ -93,56 +92,12 @@ const navItems = [
 .nav-tab.active { background: var(--accent-soft); color: var(--accent-text); }
 .nav-icon { font-size: 15px; }
 .topbar-right { margin-left: auto; }
-
-/* Floating Action Button */
-.fab {
-  position: fixed;
-  left: 24px;
-  bottom: 50%;
-  transform: translateY(50%);
-  z-index: 60;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  height: 48px;
-  padding: 0 20px;
-  border: none;
-  border-radius: 999px;
-  background: var(--accent);
-  color: var(--text-inverse);
-  font-size: 14px;
-  font-weight: 600;
-  cursor: pointer;
-  box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4), var(--shadow-lg);
-  transition: all 0.2s ease;
-}
-.fab:hover {
-  background: var(--accent-hover);
-  transform: translateY(50%) translateX(0) scale(1.03);
-  box-shadow: 0 8px 28px rgba(99, 102, 241, 0.5), var(--shadow-xl);
-}
-.fab:active {
-  transform: translateY(50%);
-}
-.fab-icon {
-  font-size: 20px;
-  line-height: 1;
-}
-.fab-label {
-  white-space: nowrap;
-}
+.create-task-btn { gap: 4px; }
 
 @media (max-width: 768px) {
   .topbar { padding: 0 12px; }
   .topbar-nav { margin-left: 12px; }
   .nav-label { display: none; }
-  .fab {
-    left: 50%;
-    bottom: 24px;
-    transform: translateX(-50%) translateY(0);
-  }
-  .fab:hover {
-    transform: translateX(-50%) translateY(-2px);
-  }
+  .create-task-btn span:last-child { display: none; }
 }
 </style>

@@ -55,6 +55,7 @@ export interface AppSettings {
   padding_digits: string
   filesystem_sorting: string
   ffmpeg_threads: number
+  extraction_concurrency: number
 }
 
 export interface BrowserEntry {
@@ -100,6 +101,9 @@ export interface ExtractJobItem {
   title: string
   status: string
   error_message?: string
+  started_at?: string
+  completed_at?: string
+  duration_seconds?: number
 }
 
 export interface ExtractJobDetail extends ExtractJob {

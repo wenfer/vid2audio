@@ -56,6 +56,15 @@ function progressRing(percent: number): string {
     <text x="20" y="20" text-anchor="middle" dominant-baseline="central" font-size="9" font-weight="600" fill="var(--text-primary)">${percent}%</text>
   </svg>`
 }
+
+function formatElapsed(seconds?: number): string {
+  if (seconds == null) return '—'
+  if (seconds < 1) return `${seconds.toFixed(2)} 秒`
+  if (seconds < 60) return `${seconds.toFixed(1)} 秒`
+  const minutes = Math.floor(seconds / 60)
+  const rest = Math.round(seconds % 60)
+  return `${minutes} 分 ${rest} 秒`
+}
 </script>
 
 <template>
@@ -102,10 +111,11 @@ function progressRing(percent: number): string {
           </div>
           <div class="progress-bar"><div class="progress-fill" :style="{ width: selectedJob.progress + '%' }"></div></div>
           <div class="items-list">
-            <div class="item-row header"><div>状态</div><div>文件</div><div>输出</div></div>
+            <div class="item-row header"><div>状态</div><div>文件</div><div>提取耗时</div><div>输出</div></div>
             <div v-for="item in selectedJob.items" :key="item.id" class="item-row">
               <div><span class="badge" :class="statusBadgeClass(item.status)">{{ item.status }}</span></div>
               <div class="truncate">{{ item.title || item.source_path }}</div>
+              <div class="elapsed" :class="{ pending: item.duration_seconds == null }">{{ item.status === 'processing' ? '计时中…' : formatElapsed(item.duration_seconds) }}</div>
               <div class="truncate text-muted">{{ item.output_path || item.error_message || '' }}</div>
             </div>
           </div>
@@ -143,7 +153,9 @@ function progressRing(percent: number): string {
 .progress-bar { height: 8px; border-radius: 999px; background: var(--bg-inset); overflow: hidden; margin-bottom: 16px; }
 .progress-fill { height: 100%; border-radius: 999px; background: var(--accent); transition: width 0.3s ease; }
 .items-list { border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden; }
-.item-row { display: grid; grid-template-columns: 80px 1fr 1fr; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
+.item-row { display: grid; grid-template-columns: 80px minmax(180px, 1fr) 100px minmax(180px, 1fr); gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--border); font-size: 13px; }
 .item-row:last-child { border-bottom: none; }
 .item-row.header { background: var(--bg-subtle); font-weight: 600; font-size: 12px; color: var(--text-secondary); }
+.elapsed { font-variant-numeric: tabular-nums; color: var(--text-secondary); }
+.elapsed.pending { color: var(--text-muted); }
 </style>

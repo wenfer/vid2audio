@@ -31,6 +31,15 @@ export const api = {
     const query = path ? `?path=${encodeURIComponent(path)}` : ''
     return request<import('../types').BrowserState>(`/files${query}`)
   },
+  copyFiles: (sources: string[], destination: string) =>
+    request('/files/copy', { method: 'POST', body: JSON.stringify({ sources, destination }) }),
+  moveFiles: (sources: string[], destination: string) =>
+    request('/files/move', { method: 'POST', body: JSON.stringify({ sources, destination }) }),
+  renameFile: (path: string, newName: string) =>
+    request('/files/rename', { method: 'POST', body: JSON.stringify({ path, new_name: newName }) }),
+  deleteFiles: (paths: string[]) =>
+    request('/files/delete', { method: 'POST', body: JSON.stringify({ paths }) }),
+  archiveUrl: (path: string) => `${BASE}/files/archive?path=${encodeURIComponent(path)}`,
 
   // Scan
   startScan: (sourcePaths: string[]) =>

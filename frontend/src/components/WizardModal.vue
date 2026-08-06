@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { api } from '../api'
 import { useSettings } from '../composables/useSettings'
@@ -7,7 +7,11 @@ import { useToast } from '../composables/useToast'
 import FileBrowser from './FileBrowser.vue'
 import type { Collection } from '../types'
 
-const props = defineProps<{ visible: boolean }>()
+const props = defineProps<{
+  visible: boolean
+  initialCollection?: Collection | null
+  initialPath?: string
+}>()
 const emit = defineEmits<{ 'update:visible': [v: boolean] }>()
 const router = useRouter()
 const { settings } = useSettings()
@@ -28,9 +32,38 @@ const trimStart = ref(0)
 const trimEnd = ref(0)
 const tracks = ref<{ index: number; label: string }[]>([{ index: 0, label: '默认音轨' }])
 
+const hasAnalyzedCollection = computed(() => !!props.initialCollection)
+
 const canNext = computed(() => {
   if (step.value === 1) return !!selectedPath.value
   return true
+})
+
+function applyCollection(value: Collection | null | undefined) {
+  if (!value) return
+  collection.value = value
+  selectedPath.value = props.initialPath || value.source_path
+  jobName.value = value.name
+  format.value = settings.value?.default_output_format || 'mp3'
+  quality.value = settings.value?.default_quality || 'standard'
+  sampleRate.value = settings.value?.default_sample_rate || 44100
+  const first = value.video_files.find((v) => v.audio_tracks.length)
+  tracks.value = first
+    ? first.audio_tracks.map((t) => ({
+        index: t.index,
+        label: `${t.language_full || '未知'} · ${t.codec || 'audio'} · ${t.channels || '?'}ch`,
+      }))
+    : [{ index: 0, label: '默认音轨' }]
+  trackIndex.value = tracks.value[0]?.index || 0
+  step.value = 2
+}
+
+watch(() => props.initialCollection, (value) => {
+  if (props.visible) applyCollection(value)
+})
+
+watch(() => props.visible, (visible) => {
+  if (visible && props.initialCollection) applyCollection(props.initialCollection)
 })
 
 function close() {
@@ -151,8 +184,9 @@ const qualityLabels: Record<string, string> = {
         <!-- Step 2 -->
         <div v-show="step === 2" class="wizard-body">
           <div class="step-intro">
-            <h3>确认提取设置</h3>
-            <p>默认设置适合大多数场景，可直接点击下一步。</p>
+            <h3>{{ hasAnalyzedCollection ? '为已分析合集创建任务' : '确认提取设置' }}</h3>
+            <p v-if="hasAnalyzedCollection" class="analyzed-hint">✓ 已分析 {{ collection?.episode_count || 0 }} 个视频，可以直接创建任务</p>
+            <p v-else>默认设置适合大多数场景，可直接点击下一步。</p>
           </div>
           <div class="settings-form">
             <div class="form-row">
@@ -220,7 +254,7 @@ const qualityLabels: Record<string, string> = {
             <div class="summary-row"><span class="sum-icon">📝</span><div><div class="sum-label">任务名称</div><div class="sum-value">{{ jobName }}</div></div></div>
             <div class="summary-row"><span class="sum-icon">🎬</span><div><div class="sum-label">视频数量</div><div class="sum-value">{{ collection?.episode_count || 0 }} 个</div></div></div>
             <div class="summary-row"><span class="sum-icon">🎵</span><div><div class="sum-label">输出</div><div class="sum-value">{{ format.toUpperCase() }} · {{ qualityLabels[quality] || quality }}</div></div></div>
-            <div class="summary-row"><span class="sum-icon">📂</span><div><div class="sum-label">输出目录</div><div class="sum-value">{{ settings?.output_directory }}/{{ jobName }}/</div></div></div>
+            <div class="summary-row"><span class="sum-icon">📂</span><div><div class="sum-label">输出目录</div><div class="sum-value">{{ settings?.output_directory }}/{{ collection?.name }}/</div></div></div>
           </div>
         </div>
 
@@ -303,6 +337,7 @@ const qualityLabels: Record<string, string> = {
   padding: 16px; border: 1px solid var(--border);
   border-radius: var(--radius-md); background: var(--bg-subtle);
 }
+.analyzed-hint { color: var(--success-text); font-size: 13px; }
 .summary-list { display: flex; flex-direction: column; gap: 10px; }
 .summary-row {
   display: flex; align-items: center; gap: 12px;

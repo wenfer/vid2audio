@@ -69,6 +69,18 @@ async function saveSettings() {
         </div>
       </fieldset>
 
+      <!-- Performance -->
+      <fieldset class="settings-group">
+        <legend>性能</legend>
+        <div class="form-row">
+          <label class="form-field">
+            <span class="field-label">同时提取任务数</span>
+            <input v-model.number="settings.extraction_concurrency" type="number" min="1" max="32" step="1" />
+            <span class="field-hint">默认 2。数值越大速度越快，但会增加 CPU、磁盘和 NAS 负载。</span>
+          </label>
+        </div>
+      </fieldset>
+
       <!-- TTS -->
       <fieldset class="settings-group">
         <legend>TTS 片头</legend>
