@@ -6,9 +6,6 @@ use crate::{
         calculate_padding, compare_names, generate_filename, intro_filename, sanitize_filename_part,
     },
 };
-use tokio::sync::Semaphore;
-
-static JOB_LIMIT: Semaphore = Semaphore::const_new(2);
 use anyhow::{Context, Result, bail};
 use serde_json::json;
 use sqlx::Row;
@@ -16,7 +13,66 @@ use std::{
     ffi::OsString,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::{Arc, Mutex, OnceLock},
+    time::Instant,
 };
+use tokio::sync::Notify;
+
+struct JobLimiter {
+    state: Mutex<LimiterState>,
+    notify: Notify,
+}
+
+struct LimiterState {
+    active: usize,
+    limit: usize,
+}
+
+struct JobPermit {
+    limiter: Arc<JobLimiter>,
+}
+
+impl Drop for JobPermit {
+    fn drop(&mut self) {
+        let mut state = self.limiter.state.lock().expect("job limiter poisoned");
+        state.active = state.active.saturating_sub(1);
+        drop(state);
+        self.limiter.notify.notify_one();
+    }
+}
+
+impl JobLimiter {
+    async fn acquire(self: &Arc<Self>, requested_limit: i64) -> JobPermit {
+        let limit = requested_limit.clamp(1, 32) as usize;
+        loop {
+            let notified = self.notify.notified();
+            {
+                let mut state = self.state.lock().expect("job limiter poisoned");
+                state.limit = limit;
+                if state.active < state.limit {
+                    state.active += 1;
+                    return JobPermit {
+                        limiter: Arc::clone(self),
+                    };
+                }
+            }
+            notified.await;
+        }
+    }
+}
+
+fn job_limiter() -> &'static Arc<JobLimiter> {
+    static LIMITER: OnceLock<Arc<JobLimiter>> = OnceLock::new();
+    LIMITER.get_or_init(|| {
+        Arc::new(JobLimiter {
+            state: Mutex::new(LimiterState {
+                active: 0,
+                limit: 2,
+            }),
+            notify: Notify::new(),
+        })
+    })
+}
 
 pub async fn run_job(
     db: Database,
@@ -25,7 +81,7 @@ pub async fn run_job(
     request: ExtractRequest,
     job_id: String,
 ) {
-    let _permit = JOB_LIMIT.acquire().await.expect("job semaphore closed");
+    let _permit = job_limiter().acquire(settings.extraction_concurrency).await;
     if let Err(error) = run_job_inner(&db, &settings, &collection, &request, &job_id).await {
         mark_job_failed(&db, &job_id, &error.to_string()).await;
     }
@@ -116,16 +172,27 @@ async fn run_job_inner(
             .bind(job_id)
             .execute(&db.pool)
             .await?;
-        sqlx::query(
-            "UPDATE extract_job_items SET status='processing' WHERE job_id=? AND video_file_id=?",
-        )
+        sqlx::query("UPDATE extract_job_items SET status='processing',started_at=CURRENT_TIMESTAMP,duration_seconds=NULL WHERE job_id=? AND video_file_id=?")
         .bind(job_id)
         .bind(&video.id)
         .execute(&db.pool)
         .await?;
+        let extraction_started = Instant::now();
         let output_name =
             generate_filename(position + 1, &video.episode_title, &extension, padding);
         let output_path = output_dir.join(&output_name);
+        let source_track = video
+            .audio_tracks
+            .iter()
+            .find(|track| track.index == request.track_index);
+        let stream_copy = can_stream_copy_mp3(
+            &extension,
+            source_track,
+            bitrate,
+            request.sample_rate,
+            request.trim_start_seconds,
+            request.trim_end_seconds,
+        );
         match extract_one(
             video.filepath.clone(),
             request.track_index,
@@ -136,18 +203,21 @@ async fn run_job_inner(
             video.duration,
             request.trim_start_seconds,
             request.trim_end_seconds,
+            stream_copy,
             settings,
         )
         .await
         {
             Ok(()) => {
+                let duration_seconds = extraction_started.elapsed().as_secs_f64();
                 output_files.push(output_name);
-                sqlx::query("UPDATE extract_job_items SET status='completed',output_path=?,completed_at=CURRENT_TIMESTAMP WHERE job_id=? AND video_file_id=?").bind(output_path.to_string_lossy().as_ref()).bind(job_id).bind(&video.id).execute(&db.pool).await?;
+                sqlx::query("UPDATE extract_job_items SET status='completed',output_path=?,completed_at=CURRENT_TIMESTAMP,duration_seconds=? WHERE job_id=? AND video_file_id=?").bind(output_path.to_string_lossy().as_ref()).bind(duration_seconds).bind(job_id).bind(&video.id).execute(&db.pool).await?;
             }
             Err(error) => {
+                let duration_seconds = extraction_started.elapsed().as_secs_f64();
                 let message = error.to_string();
                 failures.push(json!({"source": video.filepath, "title": video.episode_title, "error": message}));
-                sqlx::query("UPDATE extract_job_items SET status='failed',error_message=?,completed_at=CURRENT_TIMESTAMP WHERE job_id=? AND video_file_id=?").bind(&message).bind(job_id).bind(&video.id).execute(&db.pool).await?;
+                sqlx::query("UPDATE extract_job_items SET status='failed',error_message=?,completed_at=CURRENT_TIMESTAMP,duration_seconds=? WHERE job_id=? AND video_file_id=?").bind(&message).bind(duration_seconds).bind(job_id).bind(&video.id).execute(&db.pool).await?;
             }
         }
         refresh_counts(db, job_id).await?;
@@ -221,6 +291,7 @@ async fn extract_one(
     duration: Option<f64>,
     trim_start: f64,
     trim_end: f64,
+    stream_copy: bool,
     settings: &AppSettings,
 ) -> Result<()> {
     if let Some(duration) = duration {
@@ -240,28 +311,60 @@ async fn extract_one(
         source.clone().into(),
         "-map".into(),
         format!("0:{track}").into(),
-        "-c:a".into(),
-        codec.into(),
+        "-vn".into(),
     ]);
+    if stream_copy {
+        args.extend(["-c:a".into(), "copy".into()]);
+    } else {
+        args.extend(["-c:a".into(), codec.into()]);
+    }
     if let Some(length) = duration
         .map(|d| (d - trim_start - trim_end).max(0.0))
         .filter(|d| *d > 0.0)
     {
         args.extend(["-t".into(), format!("{length:.3}").into()]);
     }
-    if !matches!(extension, "flac" | "wav") {
+    if !stream_copy && !matches!(extension, "flac" | "wav") {
         args.extend(["-b:a".into(), bitrate.into()]);
     }
-    args.extend([
-        "-ar".into(),
-        sample_rate.to_string().into(),
-        "-ac".into(),
-        "2".into(),
-        "-threads".into(),
-        settings.ffmpeg_threads.to_string().into(),
-        output.as_os_str().into(),
-    ]);
+    if !stream_copy {
+        args.extend([
+            "-ar".into(),
+            sample_rate.to_string().into(),
+            "-ac".into(),
+            "2".into(),
+            "-threads".into(),
+            settings.ffmpeg_threads.to_string().into(),
+        ]);
+    }
+    args.push(output.as_os_str().into());
     run_command("ffmpeg", args, None).await
+}
+
+fn can_stream_copy_mp3(
+    extension: &str,
+    track: Option<&crate::models::AudioTrack>,
+    bitrate: &str,
+    sample_rate: i64,
+    trim_start: f64,
+    trim_end: f64,
+) -> bool {
+    let Some(track) = track else { return false };
+    let requested_bitrate = bitrate
+        .strip_suffix('k')
+        .and_then(|value| value.parse::<i64>().ok())
+        .map(|value| value * 1000);
+    extension.eq_ignore_ascii_case("mp3")
+        && track.codec.eq_ignore_ascii_case("mp3")
+        && trim_start <= f64::EPSILON
+        && trim_end <= f64::EPSILON
+        && track.sample_rate == Some(sample_rate)
+        && track.channels == Some(2)
+        && requested_bitrate.is_some_and(|requested| {
+            track
+                .bitrate
+                .is_some_and(|actual| (actual - requested).abs() <= 8_000)
+        })
 }
 
 pub async fn preview(

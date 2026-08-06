@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS extract_jobs (
 CREATE TABLE IF NOT EXISTS extract_job_items (
  id TEXT PRIMARY KEY, job_id TEXT NOT NULL, video_file_id TEXT, source_path TEXT NOT NULL,
  output_path TEXT, title TEXT, status TEXT DEFAULT 'pending', error_message TEXT,
- created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, completed_at TIMESTAMP,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, started_at TIMESTAMP, completed_at TIMESTAMP,
+ duration_seconds REAL,
  FOREIGN KEY (job_id) REFERENCES extract_jobs(id) ON DELETE CASCADE,
  FOREIGN KEY (video_file_id) REFERENCES video_files(id));
 CREATE TABLE IF NOT EXISTS settings (
@@ -98,6 +99,20 @@ impl Database {
                 .await?;
             }
         }
+        let item_rows = sqlx::query("PRAGMA table_info(extract_job_items)")
+            .fetch_all(pool)
+            .await?;
+        let item_columns: std::collections::HashSet<String> =
+            item_rows.iter().map(|row| row.get("name")).collect();
+        for (name, definition) in [("started_at", "TIMESTAMP"), ("duration_seconds", "REAL")] {
+            if !item_columns.contains(name) {
+                sqlx::query(&format!(
+                    "ALTER TABLE extract_job_items ADD COLUMN {name} {definition}"
+                ))
+                .execute(pool)
+                .await?;
+            }
+        }
         sqlx::query(
             "DELETE FROM settings WHERE key IN ('hardware_acceleration', 'hardware_acceleration_device', 'hardware_acceleration_fallback')",
         )
@@ -134,7 +149,15 @@ impl Database {
         {
             object.insert("output_directory".into(), Value::String(value));
         }
-        Ok(serde_json::from_value(Value::Object(object))?)
+        if !persisted.contains("extraction_concurrency")
+            && let Ok(value) = std::env::var("VID2AUDIO_EXTRACTION_CONCURRENCY")
+            && let Ok(value) = value.parse::<i64>()
+        {
+            object.insert("extraction_concurrency".into(), Value::Number(value.into()));
+        }
+        let mut settings: AppSettings = serde_json::from_value(Value::Object(object))?;
+        settings.extraction_concurrency = settings.extraction_concurrency.clamp(1, 32);
+        Ok(settings)
     }
 
     pub async fn update_settings(&self, patch: Map<String, Value>) -> Result<AppSettings> {
@@ -143,7 +166,8 @@ impl Database {
             .cloned()
             .unwrap_or_default();
         current.extend(patch);
-        let settings: AppSettings = serde_json::from_value(Value::Object(current))?;
+        let mut settings: AppSettings = serde_json::from_value(Value::Object(current))?;
+        settings.extraction_concurrency = settings.extraction_concurrency.clamp(1, 32);
         let values = serde_json::to_value(&settings)?
             .as_object()
             .cloned()
@@ -424,8 +448,12 @@ fn item_from_row(row: &sqlx::sqlite::SqliteRow) -> ExtractJobItem {
         created_at: row
             .try_get::<Option<String>, _>("created_at")
             .unwrap_or(None),
+        started_at: row
+            .try_get::<Option<String>, _>("started_at")
+            .unwrap_or(None),
         completed_at: row
             .try_get::<Option<String>, _>("completed_at")
             .unwrap_or(None),
+        duration_seconds: row.try_get("duration_seconds").unwrap_or(None),
     }
 }

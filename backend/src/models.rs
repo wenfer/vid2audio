@@ -105,6 +105,7 @@ pub struct AppSettings {
     pub padding_digits: String,
     pub filesystem_sorting: String,
     pub ffmpeg_threads: i64,
+    pub extraction_concurrency: i64,
 }
 
 impl Default for AppSettings {
@@ -136,6 +137,7 @@ impl Default for AppSettings {
             padding_digits: "auto".into(),
             filesystem_sorting: "ntfs".into(),
             ffmpeg_threads: 4,
+            extraction_concurrency: 2,
         }
     }
 }
@@ -236,7 +238,9 @@ pub struct ExtractJobItem {
     pub status: String,
     pub error_message: Option<String>,
     pub created_at: Option<String>,
+    pub started_at: Option<String>,
     pub completed_at: Option<String>,
+    pub duration_seconds: Option<f64>,
 }
 
 #[derive(Clone, Debug, Serialize)]

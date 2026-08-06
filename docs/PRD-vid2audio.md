@@ -33,7 +33,7 @@ Rust + Axum + Tokio
        └── Piper：可选离线 TTS
 ```
 
-后端是单个 Rust 进程，不依赖 Redis、Celery、PostgreSQL 或独立 Worker。提取任务在 Tokio 后台任务中运行，全局最多并行两个任务。
+后端是单个 Rust 进程，不依赖 Redis、Celery、PostgreSQL 或独立 Worker。提取任务在 Tokio 后台任务中运行，全局并发数默认为 2，可在系统配置中调整（范围 1–32）。
 
 主要代码：
 
@@ -184,6 +184,7 @@ VID2AUDIO_INPUT
 VID2AUDIO_OUTPUT
 VID2AUDIO_STATIC
 VID2AUDIO_BIND
+VID2AUDIO_EXTRACTION_CONCURRENCY
 RUST_LOG
 ```
 

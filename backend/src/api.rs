@@ -6,7 +6,7 @@ use axum::{
     Json, Router,
     body::Body,
     extract::{Path as AxumPath, Query, State},
-    http::{HeaderMap, Request, StatusCode},
+    http::{HeaderMap, HeaderValue, Request, StatusCode, header},
     response::{IntoResponse, Response},
     routing::{get, post},
 };
@@ -24,7 +24,7 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
-use tracing::{Span, info, info_span};
+use tracing::{Span, info_span, warn};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -76,6 +76,11 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
     let api = Router::new()
         .route("/settings", get(get_settings).put(update_settings))
         .route("/files", get(browse_files))
+        .route("/files/copy", post(copy_files))
+        .route("/files/move", post(move_files))
+        .route("/files/rename", post(rename_file))
+        .route("/files/delete", post(delete_files))
+        .route("/files/archive", get(download_archive))
         .route("/scan/start", post(start_scan))
         .route("/collections", get(list_collections))
         .route(
@@ -112,15 +117,17 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
                         uri = %request.uri(),
                     )
                 })
-                .on_request(|request: &Request<_>, _span: &Span| {
-                    info!(method = %request.method(), uri = %request.uri(), "request started");
-                })
                 .on_response(|response: &Response<_>, latency: Duration, _span: &Span| {
-                    info!(
-                        status = %response.status(),
-                        latency_ms = latency.as_secs_f64() * 1000.0,
-                        "request completed",
-                    );
+                    if response.status().is_client_error()
+                        || response.status().is_server_error()
+                        || latency > Duration::from_secs(1)
+                    {
+                        warn!(
+                            status = %response.status(),
+                            latency_ms = latency.as_secs_f64() * 1000.0,
+                            "request completed with warning",
+                        );
+                    }
                 }),
         )
         .with_state(Arc::new(state))
@@ -222,6 +229,264 @@ async fn browse_files(
     Ok(Json(
         json!({"path": canonical(&current), "requested_path": requested.to_string_lossy(), "parent": current.parent().map(canonical), "warning": warning, "sorting": settings.filesystem_sorting, "entries": entries}),
     ))
+}
+
+#[derive(Deserialize)]
+struct FileTransferRequest {
+    sources: Vec<String>,
+    destination: String,
+}
+
+#[derive(Deserialize)]
+struct FileRenameRequest {
+    path: String,
+    new_name: String,
+}
+
+#[derive(Deserialize)]
+struct FileDeleteRequest {
+    paths: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct ArchiveQuery {
+    path: String,
+}
+
+async fn download_archive(Query(query): Query<ArchiveQuery>) -> ApiResult<Response> {
+    let source = expand_home(&PathBuf::from(query.path));
+    validate_source(&source)?;
+    let archive_name = format!(
+        "{}.zip",
+        source
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("archive")
+    );
+    let bytes = tokio::task::spawn_blocking(move || create_archive(&source)).await??;
+    let mut response_headers = HeaderMap::new();
+    response_headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/zip"),
+    );
+    response_headers.insert(
+        header::CONTENT_DISPOSITION,
+        HeaderValue::from_str(&format!(
+            "attachment; filename=\"{}\"",
+            sanitize_header_value(&archive_name)
+        ))?,
+    );
+    response_headers.insert(
+        header::CONTENT_LENGTH,
+        HeaderValue::from_str(&bytes.len().to_string())?,
+    );
+    Ok((response_headers, Body::from(bytes)).into_response())
+}
+
+fn sanitize_header_value(value: &str) -> String {
+    value
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || matches!(character, '.' | '-' | '_' | ' ') {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect()
+}
+
+fn create_archive(source: &Path) -> ApiResult<Vec<u8>> {
+    use std::io::{Cursor, Write};
+    use zip::{ZipWriter, write::SimpleFileOptions};
+
+    let source = source.canonicalize()?;
+    let root_name = source
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("archive")
+        .to_string();
+    let mut archive = ZipWriter::new(Cursor::new(Vec::new()));
+    let options = SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+    if source.is_file() {
+        archive.start_file(&root_name, options)?;
+        archive.write_all(&std::fs::read(&source)?)?;
+    } else {
+        for entry in walkdir::WalkDir::new(&source).follow_links(false) {
+            let entry = entry.map_err(|error| anyhow::anyhow!(error))?;
+            let path = entry.path();
+            let relative = path
+                .strip_prefix(&source)
+                .map_err(|error| anyhow::anyhow!(error))?;
+            let archive_path = if relative.as_os_str().is_empty() {
+                root_name.clone()
+            } else {
+                format!(
+                    "{}/{}",
+                    root_name,
+                    relative.to_string_lossy().replace('\\', "/")
+                )
+            };
+            if entry.file_type().is_symlink() {
+                continue;
+            }
+            if entry.file_type().is_dir() {
+                archive.add_directory(format!("{archive_path}/"), options)?;
+            } else {
+                archive.start_file(archive_path, options)?;
+                archive.write_all(&std::fs::read(path)?)?;
+            }
+        }
+    }
+    Ok(archive.finish()?.into_inner())
+}
+
+async fn copy_files(Json(request): Json<FileTransferRequest>) -> ApiResult<Json<Value>> {
+    let count = request.sources.len();
+    tokio::task::spawn_blocking(move || transfer_files(request, false)).await??;
+    Ok(Json(json!({"success": true, "count": count})))
+}
+
+async fn move_files(Json(request): Json<FileTransferRequest>) -> ApiResult<Json<Value>> {
+    let count = request.sources.len();
+    tokio::task::spawn_blocking(move || transfer_files(request, true)).await??;
+    Ok(Json(json!({"success": true, "count": count})))
+}
+
+async fn rename_file(Json(request): Json<FileRenameRequest>) -> ApiResult<Json<Value>> {
+    let path = expand_home(&PathBuf::from(request.path));
+    validate_source(&path)?;
+    validate_file_name(&request.new_name)?;
+    let target = path
+        .parent()
+        .ok_or_else(|| ApiError::forbidden("不能重命名文件系统根目录"))?
+        .join(&request.new_name);
+    if target.exists() {
+        return Err(ApiError::conflict(format!(
+            "目标已存在: {}",
+            target.display()
+        )));
+    }
+    std::fs::rename(&path, &target)?;
+    Ok(Json(json!({"success": true, "path": canonical(&target)})))
+}
+
+async fn delete_files(Json(request): Json<FileDeleteRequest>) -> ApiResult<Json<Value>> {
+    if request.paths.is_empty() {
+        return Err(ApiError::not_found("没有选择要删除的文件"));
+    }
+    let count = request.paths.len();
+    tokio::task::spawn_blocking(move || {
+        for value in request.paths {
+            let path = expand_home(&PathBuf::from(value));
+            validate_source(&path)?;
+            if path.parent().is_none() {
+                return Err(ApiError::forbidden("不能删除文件系统根目录"));
+            }
+            let metadata = std::fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(&path)?;
+            } else {
+                std::fs::remove_file(&path)?;
+            }
+        }
+        Ok::<(), ApiError>(())
+    })
+    .await??;
+    Ok(Json(json!({"success": true, "count": count})))
+}
+
+fn transfer_files(request: FileTransferRequest, move_source: bool) -> ApiResult<()> {
+    if request.sources.is_empty() {
+        return Err(ApiError::not_found("没有选择要操作的文件"));
+    }
+    let destination = expand_home(&PathBuf::from(request.destination));
+    if !destination.is_dir() {
+        return Err(ApiError::not_found(format!(
+            "目标目录不存在: {}",
+            destination.display()
+        )));
+    }
+    let destination = destination.canonicalize()?;
+    for source_value in request.sources {
+        let source = expand_home(&PathBuf::from(source_value));
+        validate_source(&source)?;
+        let source = source.canonicalize()?;
+        let name = source
+            .file_name()
+            .ok_or_else(|| ApiError::forbidden("不能操作文件系统根目录"))?;
+        let target = destination.join(name);
+        if source == target {
+            return Err(ApiError::conflict("源文件和目标文件相同"));
+        }
+        if source.is_dir() && destination.starts_with(&source) {
+            return Err(ApiError::conflict("不能将文件夹复制或移动到自身内部"));
+        }
+        if target.exists() {
+            return Err(ApiError::conflict(format!(
+                "目标已存在: {}",
+                target.display()
+            )));
+        }
+        if move_source {
+            if std::fs::rename(&source, &target).is_err() {
+                copy_path(&source, &target)?;
+                if source.is_dir() {
+                    std::fs::remove_dir_all(&source)?;
+                } else {
+                    std::fs::remove_file(&source)?;
+                }
+            }
+        } else {
+            copy_path(&source, &target)?;
+        }
+    }
+    Ok(())
+}
+
+fn validate_source(path: &Path) -> ApiResult<()> {
+    if !path.exists() {
+        return Err(ApiError::not_found(format!(
+            "文件不存在: {}",
+            path.display()
+        )));
+    }
+    if path.parent().is_none() {
+        return Err(ApiError::forbidden("不能操作文件系统根目录"));
+    }
+    Ok(())
+}
+
+fn validate_file_name(name: &str) -> ApiResult<()> {
+    if name.trim().is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+    {
+        return Err(ApiError::conflict("请输入不包含路径分隔符的有效名称"));
+    }
+    Ok(())
+}
+
+fn copy_path(source: &Path, target: &Path) -> ApiResult<()> {
+    let metadata = std::fs::symlink_metadata(source)?;
+    if metadata.file_type().is_symlink() {
+        return Err(ApiError::forbidden(format!(
+            "暂不支持复制符号链接: {}",
+            source.display()
+        )));
+    }
+    if metadata.is_dir() {
+        std::fs::create_dir(target)?;
+        for entry in std::fs::read_dir(source)? {
+            let entry = entry?;
+            copy_path(&entry.path(), &target.join(entry.file_name()))?;
+        }
+    } else {
+        std::fs::copy(source, target)?;
+    }
+    Ok(())
 }
 
 async fn start_scan(

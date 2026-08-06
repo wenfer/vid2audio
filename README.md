@@ -7,6 +7,8 @@
 - Rust/Axum 后端与 Vue 3 静态 Web UI
 - 目录扫描、合集识别、标题清理
 - 支持按文件夹或单个视频文件创建音频提取任务
+- 文件管理器支持复制、粘贴、移动、删除、重命名，以及将选中文件/目录打包为 ZIP 下载
+- 分析结果以弹窗展示，可直接复用任务表单创建提取任务
 - ffprobe 音轨解析
 - 音轨选择、10 秒试听、导出音频播放、开头/结尾偏移
 - MP3/M4A/OGG/FLAC/WAV/OPUS 提取接口
@@ -34,6 +36,8 @@ cargo run
 打开 http://127.0.0.1:8000。
 
 本机直接运行需要安装 `ffmpeg` 和 `ffprobe`。默认 Docker/GHCR 镜像已经内置两者。
+
+默认最多同时运行 2 个音频提取任务，可在“系统配置”中调整，也可以通过 `VID2AUDIO_EXTRACTION_CONCURRENCY` 设置初始值。
 
 常用检查命令：
 
@@ -126,7 +130,7 @@ volumes:
 每个版本发布两个可读标签，它们指向同一份多架构 manifest，不会重复构建镜像：
 
 ```text
-ghcr.io/wenfer/vid2audio:v0.2.1
+ghcr.io/wenfer/vid2audio:v0.2.2
 ghcr.io/wenfer/vid2audio:latest
 ```
 
@@ -152,4 +156,5 @@ Base URL: `/api/v1`
 - `GET /extract/jobs`
 - `GET /settings`
 - `PUT /settings`
+- `GET /files/archive?path=...`
 - `GET /system/status`
