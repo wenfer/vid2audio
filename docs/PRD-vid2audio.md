@@ -1,6 +1,6 @@
 # Vid2Audio 产品与实现说明
 
-> 当前版本：0.2.0
+> 当前版本：0.2.1
 >
 > 目标平台：Docker、Linux AMD64/ARM64、NAS 设备
 > 本文只描述仓库当前实现和必须保持的产品约束。
@@ -198,7 +198,7 @@ RUST_LOG
 默认 GHCR 镜像内置 `ffmpeg` 和 `ffprobe`，不需要挂载宿主机二进制：
 
 ```text
-ghcr.io/wenfer/vid2audio:v0.2.0
+ghcr.io/wenfer/vid2audio:v0.2.1
 ghcr.io/wenfer/vid2audio:latest
 ```
 

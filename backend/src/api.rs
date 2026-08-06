@@ -16,6 +16,7 @@ use sqlx::Row;
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
+    time::Duration,
 };
 use tower::ServiceExt;
 use tower_http::{
@@ -23,6 +24,7 @@ use tower_http::{
     services::{ServeDir, ServeFile},
     trace::TraceLayer,
 };
+use tracing::{Span, info, info_span};
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -101,7 +103,26 @@ pub fn router(state: AppState, static_dir: PathBuf) -> Router {
                 .allow_methods(Any)
                 .allow_headers(Any),
         )
-        .layer(TraceLayer::new_for_http())
+        .layer(
+            TraceLayer::new_for_http()
+                .make_span_with(|request: &Request<_>| {
+                    info_span!(
+                        "http_request",
+                        method = %request.method(),
+                        uri = %request.uri(),
+                    )
+                })
+                .on_request(|request: &Request<_>, _span: &Span| {
+                    info!(method = %request.method(), uri = %request.uri(), "request started");
+                })
+                .on_response(|response: &Response<_>, latency: Duration, _span: &Span| {
+                    info!(
+                        status = %response.status(),
+                        latency_ms = latency.as_secs_f64() * 1000.0,
+                        "request completed",
+                    );
+                }),
+        )
         .with_state(Arc::new(state))
 }
 
