@@ -130,7 +130,7 @@ volumes:
 每个版本发布两个可读标签，它们指向同一份多架构 manifest，不会重复构建镜像：
 
 ```text
-ghcr.io/wenfer/vid2audio:v0.2.2
+ghcr.io/wenfer/vid2audio:v0.2.3
 ghcr.io/wenfer/vid2audio:latest
 ```
 
