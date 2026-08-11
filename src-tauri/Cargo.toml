@@ -1,0 +1,36 @@
+[package]
+name = "vid2audio-desktop"
+version = "0.2.3"
+description = "Vid2Audio 桌面版"
+edition = "2024"
+
+# 刻意不与 backend 组成 workspace：docker/Dockerfile 把 backend/ 当独立 crate 复制
+# （COPY backend/Cargo.toml backend/Cargo.lock），一旦加了 workspace，容器构建就找不到 lock 了。
+
+[lib]
+name = "vid2audio_desktop"
+crate-type = ["lib"]
+
+[build-dependencies]
+tauri-build = "2.6"
+
+[dependencies]
+anyhow = "1.0"
+axum = "0.8"
+tauri = "2.11"
+tauri-plugin-dialog = "2.7"
+tauri-plugin-opener = "2.5"
+tokio = { version = "1.52", features = ["rt-multi-thread"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+vid2audio = { path = "../backend" }
+vid2audio-bridge = { path = "../bridge" }
+
+[features]
+# `tauri build` 会带上这个 feature；`tauri dev` 不带，此时 WebView 指向 vite dev server。
+custom-protocol = ["tauri/custom-protocol"]
+
+[profile.release]
+strip = true
+lto = "thin"
+codegen-units = 1

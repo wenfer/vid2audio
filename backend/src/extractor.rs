@@ -12,7 +12,7 @@ use sqlx::Row;
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Stdio,
     sync::{Arc, Mutex, OnceLock},
     time::Instant,
 };
@@ -74,6 +74,37 @@ fn job_limiter() -> &'static Arc<JobLimiter> {
     })
 }
 
+/// 每次运行一个任务都会拿到新的世代号。暂停后工作线程要跑完当前这个文件才会退出，
+/// 如果用户在这个空档里点了「继续」，新旧两个线程会同时提取同一批文件——
+/// 旧线程发现世代号变了就自己退出。
+fn job_epochs() -> &'static Mutex<std::collections::HashMap<String, u64>> {
+    static EPOCHS: OnceLock<Mutex<std::collections::HashMap<String, u64>>> = OnceLock::new();
+    EPOCHS.get_or_init(|| Mutex::new(std::collections::HashMap::new()))
+}
+
+fn begin_run(job_id: &str) -> u64 {
+    let mut epochs = job_epochs().lock().expect("job epochs poisoned");
+    let epoch = epochs.get(job_id).copied().unwrap_or(0) + 1;
+    epochs.insert(job_id.to_string(), epoch);
+    epoch
+}
+
+fn is_current_run(job_id: &str, epoch: u64) -> bool {
+    job_epochs()
+        .lock()
+        .expect("job epochs poisoned")
+        .get(job_id)
+        .copied()
+        == Some(epoch)
+}
+
+fn end_run(job_id: &str, epoch: u64) {
+    let mut epochs = job_epochs().lock().expect("job epochs poisoned");
+    if epochs.get(job_id).copied() == Some(epoch) {
+        epochs.remove(job_id);
+    }
+}
+
 pub async fn run_job(
     db: Database,
     settings: AppSettings,
@@ -81,10 +112,15 @@ pub async fn run_job(
     request: ExtractRequest,
     job_id: String,
 ) {
+    let epoch = begin_run(&job_id);
     let _permit = job_limiter().acquire(settings.extraction_concurrency).await;
-    if let Err(error) = run_job_inner(&db, &settings, &collection, &request, &job_id).await {
+    if !is_current_run(&job_id, epoch) {
+        return;
+    }
+    if let Err(error) = run_job_inner(&db, &settings, &collection, &request, &job_id, epoch).await {
         mark_job_failed(&db, &job_id, &error.to_string()).await;
     }
+    end_run(&job_id, epoch);
 }
 
 async fn run_job_inner(
@@ -93,14 +129,34 @@ async fn run_job_inner(
     collection: &Collection,
     request: &ExtractRequest,
     job_id: &str,
+    epoch: u64,
 ) -> Result<()> {
     require_command("ffmpeg")?;
+    // 排队等并发额度时用户可能已经暂停、取消或删除了任务，这时不要把状态改回 processing。
+    let queued_status = sqlx::query("SELECT status FROM extract_jobs WHERE id=?")
+        .bind(job_id)
+        .fetch_optional(&db.pool)
+        .await?
+        .map(|row| row.get::<String, _>(0));
+    if !matches!(queued_status.as_deref(), Some("queued" | "processing")) {
+        return Ok(());
+    }
     sqlx::query("UPDATE extract_jobs SET status='processing',progress=1,started_at=CURRENT_TIMESTAMP WHERE id=?").bind(job_id).execute(&db.pool).await?;
     let selected = request
         .selected_video_ids
         .as_ref()
         .filter(|values| !values.is_empty())
         .map(|v| v.iter().collect::<std::collections::HashSet<_>>());
+    // 继续执行时，已经成功提取过的文件不再重来一遍。
+    let finished: std::collections::HashSet<String> = sqlx::query(
+        "SELECT video_file_id FROM extract_job_items WHERE job_id=? AND status='completed' AND video_file_id IS NOT NULL",
+    )
+    .bind(job_id)
+    .fetch_all(&db.pool)
+    .await?
+    .iter()
+    .filter_map(|row| row.try_get::<Option<String>, _>(0).unwrap_or(None))
+    .collect();
     let mut videos: Vec<_> = collection
         .video_files
         .iter()
@@ -123,8 +179,12 @@ async fn run_job_inner(
     if extension == "aac" {
         extension = "m4a".into();
     }
-    let output_dir =
-        PathBuf::from(&settings.output_directory).join(sanitize_filename_part(&collection.name));
+    let output_base = request
+        .output_directory
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&settings.output_directory);
+    let output_dir = PathBuf::from(output_base).join(sanitize_filename_part(&collection.name));
     tokio::fs::create_dir_all(&output_dir).await?;
     let bitrate = match request.quality.as_str() {
         "economy" => "64k",
@@ -138,16 +198,18 @@ async fn run_job_inner(
 
     if request.generate_intro {
         let path = output_dir.join(intro_filename(&collection.name, &extension));
-        if let Some(warning) = generate_intro(
-            request.intro_text.as_deref().unwrap_or(&collection.name),
-            &path,
-            &extension,
-            bitrate,
-            request.sample_rate,
-            request,
-            settings,
-        )
-        .await?
+        // 继续执行时片头已经在上一轮生成过，不再重复合成。
+        if !path.exists()
+            && let Some(warning) = generate_intro(
+                request.intro_text.as_deref().unwrap_or(&collection.name),
+                &path,
+                &extension,
+                bitrate,
+                request.sample_rate,
+                request,
+                settings,
+            )
+            .await?
         {
             warnings.push(warning);
         }
@@ -157,13 +219,37 @@ async fn run_job_inner(
         request.padding_digits.as_deref().unwrap_or("auto"),
     );
     for (position, video) in videos.iter().enumerate() {
-        let status: String = sqlx::query("SELECT status FROM extract_jobs WHERE id=?")
+        // 用户在暂停的空档里点了「继续」，新线程已经接手，这个旧线程直接退出。
+        if !is_current_run(job_id, epoch) {
+            return Ok(());
+        }
+        // 任务可能已被删除，这时安静退出，不要报错也不要重建任何行。
+        let Some(row) = sqlx::query("SELECT status FROM extract_jobs WHERE id=?")
             .bind(job_id)
-            .fetch_one(&db.pool)
+            .fetch_optional(&db.pool)
             .await?
-            .get(0);
+        else {
+            return Ok(());
+        };
+        let status: String = row.get(0);
         if status == "cancelled" {
             return Ok(());
+        }
+        if status == "paused" {
+            // 暂停：把还没开始的明细放回 pending，等用户点「继续」时再接着跑。
+            sqlx::query("UPDATE extract_job_items SET status='pending',started_at=NULL WHERE job_id=? AND status='processing'")
+                .bind(job_id)
+                .execute(&db.pool)
+                .await?;
+            sqlx::query("UPDATE extract_jobs SET current_file=NULL WHERE id=?")
+                .bind(job_id)
+                .execute(&db.pool)
+                .await?;
+            return Ok(());
+        }
+        // 位置编号按完整列表算，跳过已完成项也不会让文件序号错位。
+        if finished.contains(&video.id) {
+            continue;
         }
         let progress = (((position as f64) / videos.len().max(1) as f64) * 95.0) as i64 + 2;
         sqlx::query("UPDATE extract_jobs SET progress=?,current_file=? WHERE id=?")
@@ -222,6 +308,28 @@ async fn run_job_inner(
         }
         refresh_counts(db, job_id).await?;
     }
+    // 继续执行的任务里，上一轮产出的文件也要留在汇总中。
+    if !finished.is_empty() {
+        let previous = sqlx::query(
+            "SELECT output_path FROM extract_job_items WHERE job_id=? AND status='completed' AND output_path IS NOT NULL",
+        )
+        .bind(job_id)
+        .fetch_all(&db.pool)
+        .await?;
+        for row in previous {
+            let Some(path) = row.try_get::<Option<String>, _>(0).unwrap_or(None) else {
+                continue;
+            };
+            let name = Path::new(&path)
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned();
+            if !name.is_empty() && !output_files.contains(&name) {
+                output_files.push(name);
+            }
+        }
+    }
     output_files.sort_by(|a, b| compare_names(a, b, "ntfs"));
     let row =
         sqlx::query("SELECT success_count,failure_count,total_count FROM extract_jobs WHERE id=?")
@@ -277,7 +385,8 @@ async fn refresh_counts(db: &Database, job_id: &str) -> Result<()> {
 async fn mark_job_failed(db: &Database, job_id: &str, message: &str) {
     let _ = sqlx::query("UPDATE extract_job_items SET status='failed',error_message=?,completed_at=CURRENT_TIMESTAMP WHERE job_id=? AND status IN ('pending','processing')").bind(message).bind(job_id).execute(&db.pool).await;
     let summary = json!({"failures": [{"error": message}]});
-    let _ = sqlx::query("UPDATE extract_jobs SET status='failed',progress=100,error_message=?,summary=?,completed_at=CURRENT_TIMESTAMP,failure_count=(SELECT COUNT(*) FROM extract_job_items WHERE job_id=? AND status='failed') WHERE id=? AND status!='cancelled'").bind(message).bind(summary.to_string()).bind(job_id).bind(job_id).execute(&db.pool).await;
+    // 已暂停或已取消的任务不要被改成 failed，否则用户点「继续」时看到的状态是错的。
+    let _ = sqlx::query("UPDATE extract_jobs SET status='failed',progress=100,error_message=?,summary=?,completed_at=CURRENT_TIMESTAMP,failure_count=(SELECT COUNT(*) FROM extract_job_items WHERE job_id=? AND status='failed') WHERE id=? AND status NOT IN ('cancelled','paused')").bind(message).bind(summary.to_string()).bind(job_id).bind(job_id).execute(&db.pool).await;
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -509,10 +618,12 @@ async fn silent_placeholder(
 
 fn resolve_piper_model(voice: &str) -> Option<PathBuf> {
     let direct = PathBuf::from(voice);
-    if direct.is_absolute() && direct.is_file() {
+    // 不用 is_absolute()：Windows 上 `/data/x.onnx` 有 root 无盘符，会被判成相对路径。
+    if direct.is_file() {
         return Some(direct);
     }
     for root in [
+        crate::platform::default_data_dir().join("piper-voices"),
         PathBuf::from("/app/data/piper-voices"),
         PathBuf::from("data/piper-voices"),
     ] {
@@ -555,7 +666,7 @@ async fn run_command(
     stdin: Option<Vec<u8>>,
 ) -> Result<()> {
     tokio::task::spawn_blocking(move || {
-        let mut command = Command::new(program);
+        let mut command = crate::media::command(program)?;
         command
             .args(args)
             .stdout(Stdio::piped())

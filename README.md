@@ -8,6 +8,7 @@
 - 目录扫描、合集识别、标题清理
 - 支持按文件夹或单个视频文件创建音频提取任务
 - 文件管理器支持复制、粘贴、移动、删除、重命名，以及将选中文件/目录打包为 ZIP 下载
+- 文件管理器提供「FAT 排序」，把文件夹内的目录项按自然数字顺序重写，修正故事机 / 车机的播放顺序
 - 分析结果以弹窗展示，可直接复用任务表单创建提取任务
 - ffprobe 音轨解析
 - 音轨选择、10 秒试听、导出音频播放、开头/结尾偏移
@@ -15,9 +16,32 @@
 - `000_合集名.mp3` TTS 提示音占位/生成
 - NTFS/FAT 兼容排序、自然排序、前导零适配与排序验证
 - 任务进度、逐文件结果、成功/失败数量和失败原因简报
+- 任务可暂停/继续，进程重启后中断的任务自动转为暂停，不会卡住也不会重复提取
 - 全局最小文件大小、视频后缀白名单和过滤后缀配置
 - SQLite 持久化
 - Docker 与 docker-compose 部署文件
+- Tauri v2 桌面版外壳（优先 Windows），随包分发 LGPL FFmpeg，共用同一套后端与界面
+
+## 桌面版
+
+桌面版复用完全相同的后端和前端，**不监听任何 TCP 端口**：WebView 的 `v2a://`
+自定义协议直接把请求转发进 Axum router，因此别的程序和网页都碰不到本机的文件接口。
+
+界面在桌面版下的额外行为：
+
+- 路径输入框旁出现 📂，弹系统文件夹对话框
+- 文件浏览器顶部列出盘符（Windows 上 `C:\` 没有上一级，否则到不了 U 盘所在的盘）
+- 「打包下载」变成系统「另存为」，由后端直接写盘，保存完可在文件管理器中定位
+- 删除、取消任务等确认框走系统原生对话框
+
+构建（需要 Windows + MSVC 工具链 + WebView2 运行时）：
+
+```bash
+cargo install tauri-cli --version '^2'
+cd src-tauri
+python3 scripts/fetch_ffmpeg.py   # 一次性：下载随包的 LGPL FFmpeg 到 binaries/
+cargo tauri build                 # NSIS 安装包在 target/release/bundle/
+```
 
 ## 本地运行
 
@@ -149,12 +173,35 @@ ghcr.io/wenfer/vid2audio:latest
 
 Base URL: `/api/v1`
 
-- `POST /scan/start`
-- `GET /collections`
-- `GET /collections/{id}`
-- `POST /extract`
-- `GET /extract/jobs`
-- `GET /settings`
-- `PUT /settings`
-- `GET /files/archive?path=...`
-- `GET /system/status`
+```text
+GET    /files?path=...
+POST   /files/copy
+POST   /files/move
+POST   /files/rename
+POST   /files/delete
+POST   /files/fat-sort
+GET    /files/archive?path=...
+POST   /files/archive-to
+
+POST   /scan/start
+GET    /collections
+GET    /collections/{id}
+POST   /collections/{id}/scan
+DELETE /collections/{id}
+
+POST   /extract
+GET    /extract/jobs
+GET    /extract/jobs/{id}
+POST   /extract/jobs/{id}/cancel
+POST   /extract/jobs/{id}/pause
+POST   /extract/jobs/{id}/resume
+DELETE /extract/jobs/{id}
+GET    /extract/jobs/{job_id}/items/{item_id}/audio
+GET    /preview/{video_id}?track=...&duration=...&start=...
+
+GET    /settings
+PUT    /settings
+GET    /system/status
+```
+
+实现细节、产品约束和已知缺口见 [docs/PRD-vid2audio.md](docs/PRD-vid2audio.md)。

@@ -5,6 +5,7 @@ import { useSettings } from './composables/useSettings'
 import { useToast } from './composables/useToast'
 import TopBar from './components/TopBar.vue'
 import ToastStack from './components/ToastStack.vue'
+import PromptModal from './components/PromptModal.vue'
 
 const route = useRoute()
 const { load: loadSettings } = useSettings()
@@ -28,6 +29,7 @@ onMounted(async () => {
       <router-view :key="route.fullPath" />
     </main>
     <ToastStack />
+    <PromptModal />
   </div>
 </template>
 

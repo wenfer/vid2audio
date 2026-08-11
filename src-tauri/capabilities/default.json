@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "只放开原生对话框和「在文件管理器中显示」。桌面版没有任何自定义 tauri command——所有业务请求都走 v2a:// 自定义协议进 Axum router，所以 IPC 暴露面越小越好。",
+  "windows": ["main"],
+  "permissions": [
+    "dialog:allow-open",
+    "dialog:allow-save",
+    "dialog:allow-confirm",
+    "opener:allow-reveal-item-in-dir"
+  ]
+}

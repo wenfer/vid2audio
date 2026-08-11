@@ -39,7 +39,17 @@ export const api = {
     request('/files/rename', { method: 'POST', body: JSON.stringify({ path, new_name: newName }) }),
   deleteFiles: (paths: string[]) =>
     request('/files/delete', { method: 'POST', body: JSON.stringify({ paths }) }),
+  fatSort: (path: string) =>
+    request<{ success: boolean; count: number; recovered: boolean }>('/files/fat-sort', {
+      method: 'POST',
+      body: JSON.stringify({ path }),
+    }),
   archiveUrl: (path: string) => `${BASE}/files/archive?path=${encodeURIComponent(path)}`,
+  archiveTo: (path: string, destination: string) =>
+    request<{ success: boolean; path: string; size: number }>('/files/archive-to', {
+      method: 'POST',
+      body: JSON.stringify({ path, destination }),
+    }),
 
   // Scan
   startScan: (sourcePaths: string[]) =>
@@ -52,6 +62,11 @@ export const api = {
   getCollections: () => request<import('../types').Collection[]>('/collections'),
   getCollection: (id: string) => request<import('../types').Collection>(`/collections/${id}`),
   deleteCollection: (id: string) => request(`/collections/${id}`, { method: 'DELETE' }),
+  rescanCollection: (id: string) =>
+    request<{ collections: import('../types').Collection[]; files_found: number; warnings: string[] }>(
+      `/collections/${id}/scan`,
+      { method: 'POST' }
+    ),
 
   // Extract
   createJob: (data: Record<string, unknown>) =>
@@ -60,6 +75,10 @@ export const api = {
   getJob: (id: string) => request<import('../types').ExtractJobDetail>(`/extract/jobs/${id}`),
   deleteJob: (id: string) => request(`/extract/jobs/${id}`, { method: 'DELETE' }),
   cancelJob: (id: string) => request(`/extract/jobs/${id}/cancel`, { method: 'POST' }),
+  pauseJob: (id: string) =>
+    request<import('../types').ExtractJob>(`/extract/jobs/${id}/pause`, { method: 'POST' }),
+  resumeJob: (id: string) =>
+    request<import('../types').ExtractJob>(`/extract/jobs/${id}/resume`, { method: 'POST' }),
 
   // Preview
   previewUrl: (videoId: string, track: number, start: number) =>

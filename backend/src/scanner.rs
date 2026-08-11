@@ -150,12 +150,7 @@ fn absolute_path(path: &Path) -> String {
 }
 
 fn expand_home(value: &str) -> PathBuf {
-    if let Some(rest) = value.strip_prefix("~/")
-        && let Some(home) = std::env::var_os("HOME")
-    {
-        return PathBuf::from(home).join(rest);
-    }
-    PathBuf::from(value)
+    crate::platform::expand_home(value)
 }
 
 #[cfg(test)]

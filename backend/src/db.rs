@@ -1,5 +1,6 @@
 use crate::models::{
-    AppSettings, AudioTrack, Collection, ExtractJob, ExtractJobDetail, ExtractJobItem, VideoFile,
+    AppSettings, AudioTrack, Collection, ExtractJob, ExtractJobDetail, ExtractJobItem,
+    ExtractRequest, VideoFile,
 };
 use anyhow::Result;
 use serde_json::{Map, Value};
@@ -7,7 +8,7 @@ use sqlx::{
     Row, SqlitePool,
     sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous},
 };
-use std::{path::Path, str::FromStr, time::Duration};
+use std::{path::Path, time::Duration};
 
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS collections (
@@ -29,7 +30,8 @@ CREATE TABLE IF NOT EXISTS extract_jobs (
  progress INTEGER DEFAULT 0, current_file TEXT, selected_track_index INTEGER, output_format TEXT,
  quality_setting TEXT, trim_start_seconds REAL DEFAULT 0, trim_end_seconds REAL DEFAULT 0,
  total_count INTEGER DEFAULT 0, success_count INTEGER DEFAULT 0, failure_count INTEGER DEFAULT 0,
- error_message TEXT, output_path TEXT, summary TEXT DEFAULT '{}', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+ error_message TEXT, output_path TEXT, summary TEXT DEFAULT '{}', request TEXT,
+ created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
  started_at TIMESTAMP, completed_at TIMESTAMP, FOREIGN KEY (collection_id) REFERENCES collections(id));
 CREATE TABLE IF NOT EXISTS extract_job_items (
  id TEXT PRIMARY KEY, job_id TEXT NOT NULL, video_file_id TEXT, source_path TEXT NOT NULL,
@@ -55,7 +57,10 @@ impl Database {
             tokio::fs::create_dir_all(parent).await?;
         }
         let path_string = path.to_string_lossy().into_owned();
-        let options = SqliteConnectOptions::from_str(&format!("sqlite://{path_string}"))?
+        // 用 filename() 而不是拼 "sqlite://" URL：URL 形式会按第一个 `?` 切 query，
+        // 并对路径做 percent-decode，Windows 上 `D:\影片100%版\` 这种目录会被解错。
+        let options = SqliteConnectOptions::new()
+            .filename(path)
             .create_if_missing(true)
             .foreign_keys(true)
             .busy_timeout(Duration::from_secs(15))
@@ -90,6 +95,7 @@ impl Database {
             ("success_count", "INTEGER DEFAULT 0"),
             ("failure_count", "INTEGER DEFAULT 0"),
             ("summary", "TEXT DEFAULT '{}'"),
+            ("request", "TEXT"),
         ] {
             if !existing.contains(name) {
                 sqlx::query(&format!(
@@ -118,6 +124,45 @@ impl Database {
         )
         .execute(pool)
         .await?;
+        Self::clear_dangling_references(pool).await?;
+        Self::recover_interrupted_jobs(pool).await?;
+        Ok(())
+    }
+
+    /// 提取任务只活在进程内存里，容器重启或崩溃后没有工作线程再去推进它们，
+    /// 但库里的状态还停在 queued/processing——这类任务在界面上既不前进也删不掉。
+    /// 启动时把它们改成 paused，用户可以「继续」重新排队，也可以直接删除。
+    async fn recover_interrupted_jobs(pool: &SqlitePool) -> Result<()> {
+        let mut tx = pool.begin().await?;
+        sqlx::query(
+            "UPDATE extract_job_items SET status='pending',started_at=NULL,duration_seconds=NULL WHERE status='processing'",
+        )
+        .execute(&mut *tx)
+        .await?;
+        sqlx::query(
+            "UPDATE extract_jobs SET status='paused',current_file=NULL WHERE status IN ('queued','processing')",
+        )
+        .execute(&mut *tx)
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// 老版本或异常退出可能留下父行已删、子行还在的悬空引用。
+    /// 开启 foreign_keys 后这些行会让删除任务/合集报 FOREIGN KEY constraint failed，启动时清掉。
+    /// 顺序很重要：先把引用置空或删掉，再删被引用的行。
+    async fn clear_dangling_references(pool: &SqlitePool) -> Result<()> {
+        let mut tx = pool.begin().await?;
+        for statement in [
+            "UPDATE extract_job_items SET video_file_id=NULL WHERE video_file_id IS NOT NULL AND video_file_id NOT IN (SELECT id FROM video_files WHERE collection_id IN (SELECT id FROM collections))",
+            "DELETE FROM audio_tracks WHERE video_file_id NOT IN (SELECT id FROM video_files WHERE collection_id IN (SELECT id FROM collections))",
+            "DELETE FROM video_files WHERE collection_id NOT IN (SELECT id FROM collections)",
+            "DELETE FROM extract_job_items WHERE job_id NOT IN (SELECT id FROM extract_jobs)",
+            "UPDATE extract_jobs SET collection_id=NULL WHERE collection_id IS NOT NULL AND collection_id NOT IN (SELECT id FROM collections)",
+        ] {
+            sqlx::query(statement).execute(&mut *tx).await?;
+        }
+        tx.commit().await?;
         Ok(())
     }
 
@@ -198,6 +243,7 @@ impl Database {
                     video.collection_id = Some(collection.id.clone());
                 }
                 sqlx::query("UPDATE extract_job_items SET video_file_id=NULL WHERE video_file_id IN (SELECT id FROM video_files WHERE collection_id=?)").bind(&collection.id).execute(&mut *tx).await?;
+                sqlx::query("DELETE FROM audio_tracks WHERE video_file_id IN (SELECT id FROM video_files WHERE collection_id=?)").bind(&collection.id).execute(&mut *tx).await?;
                 sqlx::query("DELETE FROM video_files WHERE collection_id=?")
                     .bind(&collection.id)
                     .execute(&mut *tx)
@@ -271,6 +317,8 @@ impl Database {
         Ok(Some(collection))
     }
 
+    /// 逐层显式删除子表，不依赖 ON DELETE CASCADE：老版本建的库可能没有级联，
+    /// 直接删父行会报 FOREIGN KEY constraint failed。
     pub async fn delete_collection(&self, id: &str) -> Result<bool> {
         let mut tx = self.pool.begin().await?;
         sqlx::query("UPDATE extract_jobs SET collection_id=NULL WHERE collection_id=?")
@@ -278,6 +326,11 @@ impl Database {
             .execute(&mut *tx)
             .await?;
         sqlx::query("UPDATE extract_job_items SET video_file_id=NULL WHERE video_file_id IN (SELECT id FROM video_files WHERE collection_id=?)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM audio_tracks WHERE video_file_id IN (SELECT id FROM video_files WHERE collection_id=?)").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM video_files WHERE collection_id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
         let result = sqlx::query("DELETE FROM collections WHERE id=?")
             .bind(id)
             .execute(&mut *tx)
@@ -290,6 +343,26 @@ impl Database {
         sqlx::query("INSERT INTO extract_jobs(id,collection_id,name,source_path,status,progress,selected_track_index,output_format,quality_setting,trim_start_seconds,trim_end_seconds,total_count,summary) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&job.id).bind(&job.collection_id).bind(&job.name).bind(&job.source_path).bind(&job.status).bind(job.progress).bind(job.selected_track_index).bind(&job.output_format).bind(&job.quality_setting).bind(job.trim_start_seconds).bind(job.trim_end_seconds).bind(job.total_count).bind(job.summary.to_string()).execute(&self.pool).await?;
         Ok(())
+    }
+
+    /// 保存创建任务时用的完整参数，「继续」时按原样重新排队，
+    /// 不然重启后就没法还原音轨、裁剪、输出目录这些选项了。
+    pub async fn save_job_request(&self, id: &str, request: &ExtractRequest) -> Result<()> {
+        sqlx::query("UPDATE extract_jobs SET request=? WHERE id=?")
+            .bind(serde_json::to_string(request)?)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn load_job_request(&self, id: &str) -> Result<Option<ExtractRequest>> {
+        Ok(sqlx::query("SELECT request FROM extract_jobs WHERE id=?")
+            .bind(id)
+            .fetch_optional(&self.pool)
+            .await?
+            .and_then(|row| row.try_get::<Option<String>, _>("request").unwrap_or(None))
+            .and_then(|value| serde_json::from_str(&value).ok()))
     }
 
     pub async fn insert_items(&self, items: &[ExtractJobItem]) -> Result<()> {
@@ -330,12 +403,17 @@ impl Database {
         }))
     }
     pub async fn delete_job(&self, id: &str) -> Result<bool> {
-        Ok(sqlx::query("DELETE FROM extract_jobs WHERE id=?")
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("DELETE FROM extract_job_items WHERE job_id=?")
             .bind(id)
-            .execute(&self.pool)
-            .await?
-            .rows_affected()
-            > 0)
+            .execute(&mut *tx)
+            .await?;
+        let result = sqlx::query("DELETE FROM extract_jobs WHERE id=?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(result.rows_affected() > 0)
     }
 }
 
@@ -455,5 +533,244 @@ fn item_from_row(row: &sqlx::sqlite::SqliteRow) -> ExtractJobItem {
             .try_get::<Option<String>, _>("completed_at")
             .unwrap_or(None),
         duration_seconds: row.try_get("duration_seconds").unwrap_or(None),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 按当前建表语句造一个老版本数据库：去掉所有 ON DELETE CASCADE 和后加的列。
+    /// `Database::open` 用的是 CREATE TABLE IF NOT EXISTS，这些老表会原样保留下来，
+    /// 正好复现「删除过期任务报 FOREIGN KEY constraint failed」。
+    async fn create_legacy(path: &Path, rows: &[&str]) {
+        let options = SqliteConnectOptions::new()
+            .filename(path)
+            .create_if_missing(true)
+            .foreign_keys(false);
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let legacy = SCHEMA
+            .replace(" ON DELETE CASCADE", "")
+            .replace(" request TEXT,", "");
+        for statement in legacy
+            .split(';')
+            .chain(rows.iter().copied())
+            .map(str::trim)
+            .filter(|statement| !statement.is_empty())
+        {
+            sqlx::query(statement).execute(&pool).await.unwrap();
+        }
+        pool.close().await;
+    }
+
+    fn temp_root(label: &str) -> std::path::PathBuf {
+        let root =
+            std::env::temp_dir().join(format!("vid2audio-db-{label}-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    async fn count(db: &Database, sql: &str) -> i64 {
+        sqlx::query(sql).fetch_one(&db.pool).await.unwrap().get(0)
+    }
+
+    const SAMPLE_ROWS: &[&str] = &[
+        "INSERT INTO collections(id,name,source_path) VALUES('c1','合集','/videos')",
+        "INSERT INTO video_files(id,collection_id,filename,filepath) VALUES('v1','c1','a.mp4','/videos/a.mp4')",
+        "INSERT INTO audio_tracks(id,video_file_id,track_index) VALUES('t1','v1',1)",
+        "INSERT INTO extract_jobs(id,collection_id,name) VALUES('j1','c1','旧任务')",
+        "INSERT INTO extract_job_items(id,job_id,video_file_id,source_path) VALUES('i1','j1','v1','/videos/a.mp4')",
+    ];
+
+    #[tokio::test]
+    async fn deleting_a_job_works_without_cascades() {
+        let root = temp_root("job");
+        let path = root.join("legacy.db");
+        create_legacy(&path, SAMPLE_ROWS).await;
+        let db = Database::open(&path).await.unwrap();
+
+        assert!(db.delete_job("j1").await.unwrap());
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM extract_jobs").await, 0);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM extract_job_items").await,
+            0
+        );
+        // 只删任务，合集和视频记录保持原样。
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM video_files").await, 1);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn deleting_a_collection_works_without_cascades() {
+        let root = temp_root("collection");
+        let path = root.join("legacy.db");
+        create_legacy(&path, SAMPLE_ROWS).await;
+        let db = Database::open(&path).await.unwrap();
+
+        assert!(db.delete_collection("c1").await.unwrap());
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM collections").await, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM video_files").await, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM audio_tracks").await, 0);
+        // 任务记录保留，只解除对合集和视频的引用。
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM extract_jobs WHERE collection_id IS NULL"
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM extract_job_items WHERE video_file_id IS NULL"
+            )
+            .await,
+            1
+        );
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn opening_clears_dangling_references_left_by_older_versions() {
+        let root = temp_root("dangling");
+        let path = root.join("legacy.db");
+        create_legacy(
+            &path,
+            &[
+                "INSERT INTO collections(id,name,source_path) VALUES('c1','合集','/videos')",
+                "INSERT INTO extract_jobs(id,collection_id,name) VALUES('j1','已删除的合集','旧任务')",
+                "INSERT INTO video_files(id,collection_id,filename,filepath) VALUES('v9','已删除的合集','b.mp4','/videos/b.mp4')",
+                "INSERT INTO audio_tracks(id,video_file_id,track_index) VALUES('t9','v9',1)",
+                "INSERT INTO extract_job_items(id,job_id,video_file_id,source_path) VALUES('i1','j1','已删除的视频','/videos/a.mp4')",
+                "INSERT INTO extract_job_items(id,job_id,video_file_id,source_path) VALUES('i9','已删除的任务',NULL,'/videos/b.mp4')",
+            ],
+        )
+        .await;
+        let db = Database::open(&path).await.unwrap();
+
+        let violations = sqlx::query("PRAGMA foreign_key_check")
+            .fetch_all(&db.pool)
+            .await
+            .unwrap();
+        assert!(violations.is_empty(), "启动后不应再有悬空引用");
+        // 悬空的孤儿行被清掉，仍然有主人的任务和明细留下来。
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM video_files").await, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM audio_tracks").await, 0);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM extract_jobs").await, 1);
+        assert_eq!(
+            count(&db, "SELECT COUNT(*) FROM extract_job_items").await,
+            1
+        );
+        assert!(db.get_job("j1").await.unwrap().is_some());
+        assert!(db.delete_job("j1").await.unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn opening_marks_interrupted_jobs_as_paused() {
+        let root = temp_root("interrupted");
+        let path = root.join("legacy.db");
+        create_legacy(
+            &path,
+            &[
+                "INSERT INTO collections(id,name,source_path) VALUES('c1','合集','/videos')",
+                "INSERT INTO extract_jobs(id,collection_id,name,status,current_file) VALUES('j1','c1','跑到一半','processing','a.mp4')",
+                "INSERT INTO extract_jobs(id,collection_id,name,status) VALUES('j2','c1','还在排队','queued')",
+                "INSERT INTO extract_jobs(id,collection_id,name,status) VALUES('j3','c1','已完成','completed')",
+                "INSERT INTO extract_job_items(id,job_id,source_path,status) VALUES('i1','j1','/videos/a.mp4','processing')",
+                "INSERT INTO extract_job_items(id,job_id,source_path,status) VALUES('i2','j1','/videos/b.mp4','completed')",
+            ],
+        )
+        .await;
+        let db = Database::open(&path).await.unwrap();
+
+        // 进程重启后没人再推进这些任务，状态必须变成可操作的 paused。
+        assert_eq!(db.get_job("j1").await.unwrap().unwrap().status, "paused");
+        assert_eq!(db.get_job("j2").await.unwrap().unwrap().status, "paused");
+        assert_eq!(db.get_job("j3").await.unwrap().unwrap().status, "completed");
+        assert!(
+            db.get_job("j1")
+                .await
+                .unwrap()
+                .unwrap()
+                .current_file
+                .is_none()
+        );
+        // 半路中断的明细退回 pending，已完成的不动。
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM extract_job_items WHERE status='pending'"
+            )
+            .await,
+            1
+        );
+        assert_eq!(
+            count(
+                &db,
+                "SELECT COUNT(*) FROM extract_job_items WHERE status='completed'"
+            )
+            .await,
+            1
+        );
+        // 这类任务此前既跑不动也删不掉，现在可以直接删。
+        assert!(db.delete_job("j1").await.unwrap());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn job_request_round_trips_for_resume() {
+        let root = temp_root("request");
+        let path = root.join("legacy.db");
+        create_legacy(
+            &path,
+            &[
+                "INSERT INTO collections(id,name,source_path) VALUES('c1','合集','/videos')",
+                "INSERT INTO extract_jobs(id,collection_id,name) VALUES('j1','c1','任务')",
+            ],
+        )
+        .await;
+        let db = Database::open(&path).await.unwrap();
+
+        // 老库没有 request 列，migrate 要补上，否则「继续」永远拿不到原始参数。
+        assert!(db.load_job_request("j1").await.unwrap().is_none());
+        let request = ExtractRequest {
+            collection_id: Some("c1".into()),
+            source_path: None,
+            job_name: Some("任务".into()),
+            track_index: 3,
+            output_format: "m4a".into(),
+            quality: "premium".into(),
+            sample_rate: 48_000,
+            generate_intro: false,
+            intro_voice: String::new(),
+            tts_provider: None,
+            tts_rate: None,
+            tts_failure_mode: None,
+            intro_text: None,
+            selected_video_ids: Some(vec!["v1".into()]),
+            trim_start_seconds: 1.5,
+            trim_end_seconds: 2.5,
+            filesystem_sorting: Some("natural".into()),
+            padding_digits: Some("3".into()),
+            output_directory: Some("/mnt/usb".into()),
+        };
+        db.save_job_request("j1", &request).await.unwrap();
+
+        let loaded = db.load_job_request("j1").await.unwrap().unwrap();
+        assert_eq!(loaded.track_index, 3);
+        assert_eq!(loaded.output_format, "m4a");
+        assert_eq!(loaded.quality, "premium");
+        assert_eq!(loaded.sample_rate, 48_000);
+        assert_eq!(loaded.trim_start_seconds, 1.5);
+        assert_eq!(loaded.trim_end_seconds, 2.5);
+        assert_eq!(loaded.output_directory.as_deref(), Some("/mnt/usb"));
+        assert_eq!(loaded.selected_video_ids, Some(vec!["v1".into()]));
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

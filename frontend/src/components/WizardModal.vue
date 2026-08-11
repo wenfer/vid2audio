@@ -5,6 +5,7 @@ import { api } from '../api'
 import { useSettings } from '../composables/useSettings'
 import { useToast } from '../composables/useToast'
 import FileBrowser from './FileBrowser.vue'
+import { confirmAction, isDesktop, pickDirectory } from '../desktop'
 import type { Collection } from '../types'
 
 const props = defineProps<{
@@ -30,6 +31,7 @@ const sampleRate = ref(44100)
 const trackIndex = ref(0)
 const trimStart = ref(0)
 const trimEnd = ref(0)
+const outputDirectory = ref('')
 const tracks = ref<{ index: number; label: string }[]>([{ index: 0, label: '默认音轨' }])
 
 const hasAnalyzedCollection = computed(() => !!props.initialCollection)
@@ -47,6 +49,7 @@ function applyCollection(value: Collection | null | undefined) {
   format.value = settings.value?.default_output_format || 'mp3'
   quality.value = settings.value?.default_quality || 'standard'
   sampleRate.value = settings.value?.default_sample_rate || 44100
+  outputDirectory.value = settings.value?.output_directory || ''
   const first = value.video_files.find((v) => v.audio_tracks.length)
   tracks.value = first
     ? first.audio_tracks.map((t) => ({
@@ -71,6 +74,25 @@ function close() {
   step.value = 1
   selectedPath.value = ''
   collection.value = null
+  outputDirectory.value = ''
+}
+
+/// 第 2/3 步已经填过表单，关闭前确认一次，避免误点丢掉填好的内容。
+async function requestClose() {
+  if (step.value > 1) {
+    const ok = await confirmAction('确认关闭？已填写的任务设置将不会保存。', {
+      title: '关闭向导',
+      okLabel: '关闭',
+    })
+    if (!ok) return
+  }
+  close()
+}
+
+/** 桌面版：用系统文件夹对话框选输出目录。 */
+async function browseOutputDirectory() {
+  const picked = await pickDirectory(outputDirectory.value || settings.value?.output_directory)
+  if (picked) outputDirectory.value = picked
 }
 
 async function next() {
@@ -89,6 +111,7 @@ async function next() {
       format.value = settings.value?.default_output_format || 'mp3'
       quality.value = settings.value?.default_quality || 'standard'
       sampleRate.value = settings.value?.default_sample_rate || 44100
+      outputDirectory.value = settings.value?.output_directory || ''
       // Build track list
       const first = collection.value.video_files.find((v) => v.audio_tracks.length)
       tracks.value = first
@@ -133,6 +156,7 @@ async function startExtract() {
       tts_failure_mode: settings.value?.tts_failure_mode || 'silent',
       filesystem_sorting: settings.value?.filesystem_sorting || 'ntfs',
       padding_digits: settings.value?.padding_digits || 'auto',
+      output_directory: outputDirectory.value.trim() || undefined,
     })
     close()
     showToast('任务已创建，正在提取…', 'success')
@@ -147,11 +171,13 @@ async function startExtract() {
 const qualityLabels: Record<string, string> = {
   economy: '经济 64kbps', standard: '标准 128kbps', premium: '优质 192kbps', lossless: '高质量 320kbps'
 }
+const desktop = isDesktop()
 </script>
 
 <template>
   <Teleport to="body">
-    <div v-if="visible" class="modal-overlay" @click.self="close">
+    <!-- 不响应遮罩点击：误触会丢掉已填的设置，只能通过按钮关闭。 -->
+    <div v-if="visible" class="modal-overlay">
       <div class="wizard-dialog">
         <!-- Header -->
         <div class="wizard-header">
@@ -163,7 +189,7 @@ const qualityLabels: Record<string, string> = {
             <div class="wiz-line"></div>
             <div class="wiz-step" :class="{ active: step === 3 }"><span class="step-num">3</span> 开始</div>
           </div>
-          <button class="btn-close" @click="close">✕</button>
+          <button class="btn-close" title="关闭" @click="requestClose">✕</button>
         </div>
 
         <!-- Step 1 -->
@@ -193,6 +219,15 @@ const qualityLabels: Record<string, string> = {
               <label class="form-field span-2">
                 <span class="field-label">任务名称</span>
                 <input v-model="jobName" />
+              </label>
+            </div>
+            <div class="form-row">
+              <label class="form-field span-2">
+                <span class="field-label">输出目录</span>
+                <div class="path-field">
+                  <input v-model="outputDirectory" placeholder="留空使用设置中的默认输出目录" />
+                  <button v-if="desktop" class="btn btn-ghost btn-sm" title="选择文件夹" @click="browseOutputDirectory">📂</button>
+                </div>
               </label>
             </div>
             <div class="form-row">
@@ -254,7 +289,7 @@ const qualityLabels: Record<string, string> = {
             <div class="summary-row"><span class="sum-icon">📝</span><div><div class="sum-label">任务名称</div><div class="sum-value">{{ jobName }}</div></div></div>
             <div class="summary-row"><span class="sum-icon">🎬</span><div><div class="sum-label">视频数量</div><div class="sum-value">{{ collection?.episode_count || 0 }} 个</div></div></div>
             <div class="summary-row"><span class="sum-icon">🎵</span><div><div class="sum-label">输出</div><div class="sum-value">{{ format.toUpperCase() }} · {{ qualityLabels[quality] || quality }}</div></div></div>
-            <div class="summary-row"><span class="sum-icon">📂</span><div><div class="sum-label">输出目录</div><div class="sum-value">{{ settings?.output_directory }}/{{ collection?.name }}/</div></div></div>
+            <div class="summary-row"><span class="sum-icon">📂</span><div><div class="sum-label">输出目录</div><div class="sum-value">{{ outputDirectory || settings?.output_directory }}/{{ collection?.name }}/</div></div></div>
           </div>
         </div>
 
@@ -352,4 +387,7 @@ const qualityLabels: Record<string, string> = {
   padding: 16px 24px; border-top: 1px solid var(--border);
 }
 .footer-right { display: flex; gap: 8px; }
+/* 输入框 + 「浏览」按钮并排；按钮只在桌面版出现。 */
+.path-field { display: flex; align-items: center; gap: 6px; }
+.path-field input { flex: 1; min-width: 0; }
 </style>

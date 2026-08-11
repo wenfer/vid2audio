@@ -2,10 +2,25 @@
 import { ref } from 'vue'
 import { useSettings } from '../composables/useSettings'
 import { useToast } from '../composables/useToast'
+import { isDesktop, pickDirectory } from '../desktop'
 
 const { settings, save } = useSettings()
 const { show: showToast } = useToast()
 const saving = ref(false)
+const desktop = isDesktop()
+
+/** 桌面版：用系统文件夹对话框填路径，省得手输。 */
+async function browseScanDirectory() {
+  if (!settings.value) return
+  const picked = await pickDirectory(settings.value.scan_directories[0])
+  if (picked) settings.value.scan_directories[0] = picked
+}
+
+async function browseOutputDirectory() {
+  if (!settings.value) return
+  const picked = await pickDirectory(settings.value.output_directory)
+  if (picked) settings.value.output_directory = picked
+}
 
 async function saveSettings() {
   if (!settings.value) return
@@ -29,8 +44,20 @@ async function saveSettings() {
       <fieldset class="settings-group">
         <legend>路径设置</legend>
         <div class="form-row">
-          <label class="form-field"><span class="field-label">默认源目录</span><input v-model="settings.scan_directories[0]" /></label>
-          <label class="form-field"><span class="field-label">输出目录</span><input v-model="settings.output_directory" /></label>
+          <label class="form-field">
+            <span class="field-label">默认源目录</span>
+            <div class="path-field">
+              <input v-model="settings.scan_directories[0]" />
+              <button v-if="desktop" class="btn btn-ghost btn-sm" title="选择文件夹" @click="browseScanDirectory">📂</button>
+            </div>
+          </label>
+          <label class="form-field">
+            <span class="field-label">输出目录</span>
+            <div class="path-field">
+              <input v-model="settings.output_directory" />
+              <button v-if="desktop" class="btn btn-ghost btn-sm" title="选择文件夹" @click="browseOutputDirectory">📂</button>
+            </div>
+          </label>
         </div>
       </fieldset>
 
@@ -115,4 +142,7 @@ async function saveSettings() {
 .settings-sections { display: flex; flex-direction: column; gap: 20px; }
 .settings-group { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 16px; margin: 0; }
 .settings-group legend { font-size: 13px; font-weight: 600; padding: 0 8px; }
+/* 输入框 + 「浏览」按钮并排；按钮只在桌面版出现。 */
+.path-field { display: flex; align-items: center; gap: 6px; }
+.path-field input { flex: 1; min-width: 0; }
 </style>

@@ -1,16 +1,7 @@
-mod api;
-mod db;
-mod extractor;
-mod media;
-mod models;
-mod scanner;
-mod sorter;
-
 use anyhow::Result;
-use api::AppState;
-use db::Database;
 use std::{net::SocketAddr, path::PathBuf};
 use tracing::info;
+use vid2audio::{build_router, database_path, static_path};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -20,21 +11,12 @@ async fn main() -> Result<()> {
                 .unwrap_or_else(|_| "vid2audio=info,tower_http=info".into()),
         )
         .init();
-    let db_path = std::env::var("VID2AUDIO_DB").unwrap_or_else(|_| "data/vid2audio.db".into());
-    let static_dir = std::env::var("VID2AUDIO_STATIC")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            let local = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static");
-            if local.is_dir() {
-                local
-            } else {
-                PathBuf::from("/app/static")
-            }
-        });
-    let database = Database::open(db_path).await?;
-    let app = api::router(AppState { db: database }, static_dir);
+    let static_dir = static_path(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("static"));
+    let app = build_router(database_path(), static_dir).await?;
+    // 默认只监听回环：文件管理接口能删改任意路径，绑到 0.0.0.0 等于把它交给整个局域网。
+    // 容器部署要对外暴露时显式设 VID2AUDIO_BIND=0.0.0.0:8000。
     let address: SocketAddr = std::env::var("VID2AUDIO_BIND")
-        .unwrap_or_else(|_| "0.0.0.0:8000".into())
+        .unwrap_or_else(|_| "127.0.0.1:8000".into())
         .parse()?;
     let listener = tokio::net::TcpListener::bind(address).await?;
     info!(%address, "Vid2Audio started");

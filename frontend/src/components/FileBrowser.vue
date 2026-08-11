@@ -3,7 +3,9 @@ import { ref, onMounted, watch } from 'vue'
 import { api } from '../api'
 import type { BrowserState, BrowserEntry } from '../types'
 import { useToast } from '../composables/useToast'
+import { usePrompt } from '../composables/usePrompt'
 import { formatBytes } from '../utils'
+import { confirmAction, isDesktop, pickDirectory, pickSavePath, revealInFileManager } from '../desktop'
 
 const props = defineProps<{
   initialPath?: string
@@ -16,6 +18,8 @@ const emit = defineEmits<{
 }>()
 
 const { show: showToast } = useToast()
+const { ask } = usePrompt()
+const desktop = isDesktop()
 const state = ref<BrowserState | null>(null)
 const pathInput = ref('')
 const selectedPath = ref(props.modelValue || '')
@@ -61,6 +65,12 @@ function goParent() {
   if (state.value?.parent) loadBrowser(state.value.parent)
 }
 
+/** 桌面版：用系统文件夹对话框跳转，比手输路径快得多。 */
+async function browseTo() {
+  const picked = await pickDirectory(state.value?.path)
+  if (picked) await loadBrowser(picked)
+}
+
 function copySelection() {
   if (!selectedEntry.value) return
   clipboard.value = { path: selectedEntry.value.path }
@@ -70,7 +80,15 @@ function copySelection() {
 async function moveSelection() {
   const entry = selectedEntry.value
   if (!entry || busy.value) return
-  const destination = window.prompt('请输入目标目录', state.value?.path || '')
+  // 桌面版弹系统文件夹框；浏览器里只能手输——网页拿不到真实文件系统路径。
+  const destination = desktop
+    ? await pickDirectory(state.value?.path)
+    : await ask({
+        title: `移动“${entry.name}”`,
+        label: '目标目录（绝对路径）',
+        value: state.value?.path || '',
+        confirmLabel: '移动',
+      })
   if (!destination || destination === state.value?.path) return
   busy.value = true
   try {
@@ -97,7 +115,14 @@ async function pasteSelection() {
 async function renameSelection() {
   const entry = selectedEntry.value
   if (!entry || busy.value) return
-  const next = window.prompt('请输入新名称', entry.name)
+  // 用应用内输入框而不是 window.prompt：后者在 WebView2 里不弹窗、直接返回 null，
+  // 桌面版的重命名会变成点了没反应。
+  const next = await ask({
+    title: '重命名',
+    label: '新名称',
+    value: entry.name,
+    confirmLabel: '重命名',
+  })
   if (!next || next === entry.name) return
   busy.value = true
   try {
@@ -112,7 +137,13 @@ async function renameSelection() {
 
 async function deleteSelection() {
   const entry = selectedEntry.value
-  if (!entry || busy.value || !window.confirm(`确认删除“${entry.name}”吗？此操作不可恢复。`)) return
+  if (!entry || busy.value) return
+  const ok = await confirmAction(`确认删除“${entry.name}”吗？此操作不可恢复。`, {
+    title: '删除',
+    okLabel: '删除',
+    danger: true,
+  })
+  if (!ok) return
   busy.value = true
   try {
     await api.deleteFiles([entry.path])
@@ -124,16 +155,72 @@ async function deleteSelection() {
   finally { busy.value = false }
 }
 
-function downloadSelection() {
+/**
+ * 「另存为」的默认路径：当前目录下的同名 zip。
+ *
+ * 分隔符从当前路径推断，不要写死 `/`——Windows 上默认路径会被原样交给系统对话框。
+ */
+function suggestedArchiveName(entry: BrowserEntry): string {
+  const directory = state.value?.path || ''
+  if (!directory) return `${entry.name}.zip`
+  const separator = directory.includes('\\') ? '\\' : '/'
+  const base = directory.endsWith(separator) ? directory : `${directory}${separator}`
+  return `${base}${entry.name}.zip`
+}
+
+async function downloadSelection() {
   const entry = selectedEntry.value
   if (!entry || busy.value) return
-  const link = document.createElement('a')
-  link.href = api.archiveUrl(entry.path)
-  link.download = `${entry.name}.zip`
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  showToast('已开始打包下载', 'success')
+  if (!desktop) {
+    const link = document.createElement('a')
+    link.href = api.archiveUrl(entry.path)
+    link.download = `${entry.name}.zip`
+    document.body.appendChild(link)
+    link.click()
+    link.remove()
+    showToast('已开始打包下载', 'success')
+    return
+  }
+  // 桌面版走「另存为」：WebView2 里 <a download> 最多把文件塞进浏览器下载目录，
+  // 而用户要的是自己挑的 U 盘路径。选好路径后由后端直接写盘，不经过 WebView。
+  const destination = await pickSavePath(suggestedArchiveName(entry), {
+    name: 'ZIP 压缩包',
+    extensions: ['zip'],
+  })
+  if (!destination) return
+  busy.value = true
+  showToast('正在打包…', 'info')
+  try {
+    const result = await api.archiveTo(entry.path, destination)
+    showToast(`已保存，共 ${formatBytes(result.size)}`, 'success')
+    await revealInFileManager(result.path)
+  } catch (e: unknown) { showToast((e as Error).message, 'error') }
+  finally { busy.value = false }
+}
+
+async function fatSortSelection() {
+  const entry = selectedEntry.value
+  if (!entry || entry.type !== 'directory' || busy.value) return
+  const ok = await confirmAction(
+    `确认对文件夹“${entry.name}”执行 FAT 排序？\n\n` +
+    '将把其中的文件和子文件夹按文件名自然顺序（如 2 排在 10 之前）重新写入目录，' +
+    '故事机 / 车机 / 老 U 盘播放器会按此顺序播放。\n' +
+    '只调整存储顺序，不修改文件名和内容。',
+    { title: 'FAT 排序', okLabel: '开始排序' }
+  )
+  if (!ok) return
+  busy.value = true
+  try {
+    const result = await api.fatSort(entry.path)
+    await loadBrowser(state.value?.path || '')
+    showToast(
+      result.recovered
+        ? `已恢复上次中断的排序，共 ${result.count} 项`
+        : `FAT 排序完成，共 ${result.count} 项`,
+      'success'
+    )
+  } catch (e: unknown) { showToast((e as Error).message, 'error') }
+  finally { busy.value = false }
 }
 
 defineExpose({ loadBrowser })
@@ -142,7 +229,7 @@ defineExpose({ loadBrowser })
 <template>
   <div class="file-browser">
     <div class="browser-toolbar">
-      <button class="btn btn-ghost btn-sm" :disabled="!state?.parent" @click="goParent">⬅</button>
+      <button class="btn btn-ghost btn-sm" :disabled="!state?.parent" title="上一级" @click="goParent">⬅</button>
       <input
         v-model="pathInput"
         class="path-input"
@@ -150,7 +237,19 @@ defineExpose({ loadBrowser })
         @keydown.enter="loadBrowser(pathInput)"
       />
       <button class="btn btn-secondary btn-sm" @click="loadBrowser(pathInput)">打开</button>
-      <button class="btn btn-ghost btn-sm" @click="loadBrowser(pathInput)">🔄</button>
+      <button v-if="desktop" class="btn btn-ghost btn-sm" title="选择文件夹" @click="browseTo">📂</button>
+      <button class="btn btn-ghost btn-sm" title="刷新" @click="loadBrowser(pathInput)">🔄</button>
+    </div>
+    <!-- 盘符 / 主目录快捷入口。Windows 上 C:\ 没有上一级，没有这排按钮就到不了
+         U 盘所在的其他盘符。 -->
+    <div v-if="state?.roots?.length" class="browser-roots">
+      <button
+        v-for="root in state.roots"
+        :key="root.path"
+        class="btn btn-ghost btn-sm root-chip"
+        :title="root.path"
+        @click="loadBrowser(root.path)"
+      >{{ root.name }}</button>
     </div>
     <div class="browser-actions">
       <button class="btn btn-ghost btn-sm" :disabled="!selectedEntry" @click="copySelection">复制</button>
@@ -158,6 +257,12 @@ defineExpose({ loadBrowser })
       <button class="btn btn-ghost btn-sm" :disabled="!clipboard || busy" @click="pasteSelection">粘贴</button>
       <button class="btn btn-ghost btn-sm" :disabled="!selectedEntry || busy" @click="renameSelection">重命名</button>
       <button class="btn btn-ghost btn-sm" :disabled="!selectedEntry || busy" @click="downloadSelection">打包下载</button>
+      <button
+        class="btn btn-ghost btn-sm"
+        :disabled="!selectedEntry || selectedEntry.type !== 'directory' || busy"
+        title="按自然顺序重排目录的物理存储顺序，修正故事机 / 车机的播放顺序"
+        @click="fatSortSelection"
+      >🔤 FAT 排序</button>
       <button class="btn btn-ghost btn-sm danger-action" :disabled="!selectedEntry || busy" @click="deleteSelection">删除</button>
     </div>
     <div class="browser-list">
@@ -188,6 +293,8 @@ defineExpose({ loadBrowser })
 <style scoped>
 .file-browser { display: flex; flex-direction: column; }
 .browser-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 12px; }
+.browser-roots { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 10px; }
+.root-chip { font-family: 'SF Mono', 'Fira Code', monospace; }
 .browser-actions {
   display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
   margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid var(--border);

@@ -68,10 +68,18 @@ export interface BrowserEntry {
   reason?: string
 }
 
+export interface BrowserRoot {
+  /** 显示用的短名，如 `C:` 或 `主目录`。 */
+  name: string
+  path: string
+}
+
 export interface BrowserState {
   path: string
   parent?: string
   entries: BrowserEntry[]
+  /** 快捷入口：Windows 上是盘符，Unix 上是主目录和 `/`。 */
+  roots?: BrowserRoot[]
   sorting?: string
   warning?: string
 }

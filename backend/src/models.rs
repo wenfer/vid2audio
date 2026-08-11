@@ -111,7 +111,11 @@ pub struct AppSettings {
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
-            scan_directories: vec!["/app/input".into()],
+            scan_directories: vec![
+                crate::platform::default_input_dir()
+                    .to_string_lossy()
+                    .into_owned(),
+            ],
             video_extensions: [
                 ".mp4", ".mkv", ".avi", ".mov", ".wmv", ".flv", ".webm", ".m4v", ".mpg", ".mpeg",
                 ".ts", ".m2ts", ".vob",
@@ -133,7 +137,9 @@ impl Default for AppSettings {
             tts_rate: "+0%".into(),
             tts_failure_mode: "silent".into(),
             intro_text_template: "{collection_name}".into(),
-            output_directory: "/app/output".into(),
+            output_directory: crate::platform::default_output_dir()
+                .to_string_lossy()
+                .into_owned(),
             padding_digits: "auto".into(),
             filesystem_sorting: "ntfs".into(),
             ffmpeg_threads: 4,
@@ -185,6 +191,8 @@ pub struct ExtractRequest {
     pub filesystem_sorting: Option<String>,
     #[serde(default)]
     pub padding_digits: Option<String>,
+    #[serde(default)]
+    pub output_directory: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]

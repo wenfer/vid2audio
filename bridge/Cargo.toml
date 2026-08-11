@@ -1,0 +1,18 @@
+[package]
+name = "vid2audio-bridge"
+version = "0.2.3"
+description = "WebView 自定义协议与 Axum router 之间的转发层"
+edition = "2024"
+
+# 单独成 crate 而不是塞在 src-tauri 里：这一层是纯 HTTP 逻辑，不依赖 tauri，
+# 于是它的测试能在没有 GTK/WebView2 的开发机上跑。放在 src-tauri 内即使用
+# #[path] 引入，cargo 仍会为测试目标编译整个 crate 的依赖树（dbus、GTK），跑不起来。
+[dependencies]
+axum = "0.8"
+http-body-util = "0.1"
+tower = { version = "0.5", features = ["util"] }
+tracing = "0.1"
+url = "2.5"
+
+[dev-dependencies]
+tokio = { version = "1.52", features = ["macros", "rt-multi-thread"] }

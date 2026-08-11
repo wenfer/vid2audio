@@ -1,28 +1,29 @@
-use crate::models::AudioTrack;
+use crate::{models::AudioTrack, platform};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
-use std::{path::Path, process::Command};
+use std::path::Path;
 
 pub fn command_available(name: &str) -> bool {
-    std::env::var_os("PATH").is_some_and(|paths| {
-        std::env::split_paths(&paths).any(|dir| {
-            let path = dir.join(name);
-            path.is_file() || cfg!(windows) && path.with_extension("exe").is_file()
-        })
-    })
+    platform::find_command(name).is_some()
 }
 
 pub fn require_command(name: &str) -> Result<()> {
     if command_available(name) {
         Ok(())
     } else {
-        bail!("未找到 {name}，请在系统或 Docker 镜像中安装 FFmpeg。")
+        bail!("未找到 {name}，请先安装 FFmpeg 并确保它在 PATH 中。")
     }
 }
 
+/// 解析命令路径后再构造，这样能用上随程序分发的 ffmpeg，也不会弹控制台窗口。
+pub fn command(name: &str) -> Result<std::process::Command> {
+    let program = platform::find_command(name)
+        .ok_or_else(|| anyhow::anyhow!("未找到 {name}，请先安装 FFmpeg 并确保它在 PATH 中。"))?;
+    Ok(platform::command(&program))
+}
+
 pub fn probe_video(path: &Path) -> Result<(Option<f64>, String, String, Vec<AudioTrack>)> {
-    require_command("ffprobe")?;
-    let output = Command::new("ffprobe")
+    let output = command("ffprobe")?
         .args([
             "-v",
             "quiet",
