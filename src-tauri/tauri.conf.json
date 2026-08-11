@@ -4,7 +4,10 @@
   "version": "0.2.3",
   "identifier": "com.vid2audio.desktop",
   "build": {
-    "beforeBuildCommand": "npm --prefix ../frontend run build",
+    "beforeBuildCommand": {
+      "script": "npm run build",
+      "cwd": "../frontend"
+    },
     "frontendDist": "v2a://localhost"
   },
   "app": {

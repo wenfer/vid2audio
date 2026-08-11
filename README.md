@@ -43,6 +43,10 @@ python3 scripts/fetch_ffmpeg.py   # 一次性：下载随包的 LGPL FFmpeg 到 
 cargo tauri build                 # NSIS 安装包在 target/release/bundle/
 ```
 
+没有 Windows 机器也能出包：推一个 `v*.*.*` tag，或在 GitHub 的 Actions 页手动运行
+`Build Windows desktop installer`，安装包会作为 `vid2audio-windows-nsis` artifact 上传。
+Tauri 在 Linux 上只能走官方称为「最后手段」的 NSIS 交叉编译，所以本机不做这件事。
+
 ## 本地运行
 
 ```bash

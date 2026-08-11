@@ -37,6 +37,7 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
   - `docker-compose.yml`: default self-contained deployment.
 - `.github/workflows/docker-ghcr.yml`: multi-arch GHCR image publishing.
+- `.github/workflows/desktop-windows.yml`: Windows NSIS installer, on `v*.*.*` tags and manual dispatch.
 - `docs/PRD-vid2audio.md`: product requirements and design reference.
 
 ## Common Commands
@@ -89,7 +90,19 @@ cargo tauri build                   # NSIS installer under target/release/bundle
 ```
 
 Requires the Tauri CLI (`cargo install tauri-cli --version '^2'`) plus the MSVC
-toolchain and WebView2 runtime on Windows.
+toolchain and WebView2 runtime on Windows. Tauri cannot bundle a Windows
+installer from Linux except through the NSIS cross-compilation path its own docs
+call a last resort, so `.github/workflows/desktop-windows.yml` builds the
+installer on a `windows-latest` runner instead — push a `v*.*.*` tag or dispatch
+it manually, then download the `vid2audio-windows-nsis` artifact.
+
+`beforeBuildCommand` pins its `cwd` explicitly and must keep doing so. The CLI
+runs the hook in `resolve_frontend_dir()`, which looks for a `package.json` and
+falls back to **the parent of `src-tauri`** when it finds none — this repo has no
+root `package.json`, so a relative `--prefix` in the script resolves differently
+depending on where the build was invoked from. An explicit `cwd` is resolved
+against the CLI's own working directory, which `build.rs` has already set to the
+tauri dir, so `../frontend` is stable no matter where the user ran the command.
 
 ## Desktop Architecture
 

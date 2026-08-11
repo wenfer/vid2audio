@@ -315,6 +315,8 @@ cargo tauri build                 # NSIS 安装包在 target/release/bundle/
 
 `beforeBuildCommand` 会自动执行前端构建。安装模式是 `currentUser`，不需要管理员权限。
 
+没有 Windows 机器时走 CI：`.github/workflows/desktop-windows.yml` 在 `windows-latest` runner 上构建，`v*.*.*` tag 或手动 dispatch 触发，安装包作为 `vid2audio-windows-nsis` artifact 上传。Tauri 在 Linux 上只支持被官方称为「最后手段」的 NSIS 交叉编译（MSI 需要 WiX，只能在 Windows 运行），所以不在开发机上做这件事。
+
 ## 12. 必须保持的质量约束
 
 - FFmpeg/ffprobe 缺失时返回清晰错误，服务本身继续运行。
