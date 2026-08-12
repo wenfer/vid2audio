@@ -23,6 +23,16 @@ import sys
 import urllib.request
 import zipfile
 
+# CI 里 stdout 是管道而不是终端，此时 Python 3.12 用系统 locale 编码：英文
+# Windows runner 上是 cp1252，一 print 中文就 UnicodeEncodeError 直接把构建打挂
+# （下载都还没开始）。显式切 UTF-8；errors="replace" 是兜底，遇到装不下的流最多
+# 输出问号，绝不能让一行日志决定构建成败。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, OSError, ValueError):
+        pass
+
 # 用带版本号的稳定分支，不用 master：master 每天变，构建不可复现。
 RELEASE = "ffmpeg-n7.1-latest-win64-lgpl-shared-7.1.zip"
 URL = f"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/{RELEASE}"
@@ -44,13 +54,18 @@ def download(url):
     request = urllib.request.Request(url, headers={"User-Agent": "vid2audio-build"})
     with urllib.request.urlopen(request) as response:
         total = int(response.headers.get("content-length") or 0)
+        # 进度条只在真终端里刷：CI 日志不认 \r，115 次刷新会摊成一行 115 段的噪音。
+        live = total > 0 and sys.stdout is not None and sys.stdout.isatty()
+        if total and not live:
+            print(f"  {total / 1048576:.1f} MB")
         chunks, read = [], 0
         while chunk := response.read(1 << 20):
             chunks.append(chunk)
             read += len(chunk)
-            if total:
+            if live:
                 print(f"\r  {read / 1048576:.1f}/{total / 1048576:.1f} MB", end="")
-        print()
+        if live:
+            print()
     return b"".join(chunks)
 
 

@@ -23,9 +23,12 @@ backend/target/
 bridge/target/
 src-tauri/target/
 
+# Python 字节码（src-tauri/scripts/ 下的构建脚本）
+__pycache__/
+
 # Tauri 生成的 ACL/权限 schema，由 tauri-build 每次构建重新产出
 src-tauri/gen/schemas/
 
-# 随包分发的 ffmpeg（约 60MB，由 src-tauri/scripts/fetch_ffmpeg.py 下载）
+# 随包分发的 ffmpeg（约 115MB，由 src-tauri/scripts/fetch_ffmpeg.py 下载）
 src-tauri/binaries/*
 !src-tauri/binaries/README.md
