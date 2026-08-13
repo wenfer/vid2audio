@@ -1,18 +1,7 @@
 name: Build and publish Docker image
 
 on:
-  push:
-    tags:
-      - "v*.*.*"
-  pull_request:
-    branches:
-      - main
-    paths:
-      - ".dockerignore"
-      - ".github/workflows/docker-ghcr.yml"
-      - "backend/**"
-      - "docker/Dockerfile"
-      - "frontend/**"
+  # 不再自动构建 Docker 镜像。需要发镜像时在 Actions 页面手动 dispatch。
   workflow_dispatch:
 
 env:
