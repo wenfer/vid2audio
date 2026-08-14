@@ -1,13 +1,32 @@
-name: Build Windows desktop installer
+name: Build Windows installer
 
-# 本机是 WSL/Linux，编不出也验不了 Windows 包：Tauri 只在 Windows 上原生支持
-# 打包，而 NSIS 交叉编译是官方文档里的「最后手段」。这个 workflow 就是那台
-# 缺失的 Windows 机器。
+# ============================================================================
+# 唯一的发布流水线：构建 Windows NSIS 安装包（setup.exe）并发布 GitHub Release。
+# Docker 镜像构建已停用（见 docker-ghcr.yml），本仓库不再由 CI 发布镜像。
+#
+# 触发方式：
+#   1. 打 v*.*.* tag（如 v0.2.4）→ 自动构建并发布
+#   2. Actions 页面手动 dispatch → 填版本号后构建并发布
+#
+# 发版约束：
+#   - 版本号单一来源是 src-tauri/tauri.conf.json 的 "version"
+#   - tag 必须严格等于 v{tauri.conf.json 版本}，防止标错版本
+#   - dispatch 填的版本也必须与 tauri.conf.json 一致
+#   - 安装包命名规则：vid2audio-<版本>-windows-x64-setup.exe
+# ============================================================================
 on:
   push:
     tags:
       - "v*.*.*"
   workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号（X.Y.Z），必须与 src-tauri/tauri.conf.json 一致，例如 0.2.4"
+        required: true
+      prerelease:
+        description: "标记为预发布版本"
+        type: boolean
+        default: false
 
 concurrency:
   group: desktop-windows-${{ github.ref }}
@@ -15,40 +34,68 @@ concurrency:
 
 jobs:
   build:
-    name: Build NSIS installer
+    name: Build NSIS installer and publish release
     runs-on: windows-latest
     timeout-minutes: 60
     permissions:
-      contents: read
+      contents: write          # 发布 release 需要写权限
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 安装包文件名带版本号，打 tag 时对不上会发出个标错版本的包。
-      - name: Match Git tag to desktop version
-        if: github.ref_type == 'tag'
+      # ==================== 版本解析与校验 ====================
+      # 所有 bash 语法步骤都必须显式 shell: bash——Windows runner 默认是 pwsh，
+      # [[ ]] / $GITHUB_OUTPUT 这些写法在 pwsh 下会直接报错。
+      - name: Resolve and validate version
+        id: version
         shell: bash
         run: |
-          version="$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)"
-          if [[ -z "${version}" ]]; then
-            echo "Unable to read src-tauri/tauri.conf.json version" >&2
+          conf_version="$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)"
+          if [[ -z "${conf_version}" || ! "${conf_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "无法从 src-tauri/tauri.conf.json 读取合法版本号" >&2
             exit 1
           fi
-          if [[ "${GITHUB_REF_NAME}" != "v${version}" ]]; then
-            echo "Git tag ${GITHUB_REF_NAME} does not match desktop version v${version}" >&2
-            exit 1
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ "v${conf_version}" != "${GITHUB_REF_NAME}" ]]; then
+              echo "Git tag ${GITHUB_REF_NAME} 与 tauri.conf.json 版本 v${conf_version} 不一致" >&2
+              exit 1
+            fi
+          else
+            version="${{ inputs.version }}"
+            if [[ -z "${version}" ]]; then
+              echo "手动 dispatch 必须填写 version" >&2
+              exit 1
+            fi
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "非法版本号 ${version}（需要 X.Y.Z 格式）" >&2
+              exit 1
+            fi
+            if [[ "${version}" != "${conf_version}" ]]; then
+              echo "输入版本 ${version} 与 tauri.conf.json 版本 ${conf_version} 不一致" >&2
+              exit 1
+            fi
           fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Collect build metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "build_time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> "${GITHUB_OUTPUT}"
+          echo "sha_short=${GITHUB_SHA::8}" >> "${GITHUB_OUTPUT}"
 
       # edition 2024（platform.rs 的 `unsafe extern`）要 1.85+，runner 镜像自带的
       # Rust 可能落后，所以显式装 stable 而不是用镜像里那份。
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      # 依赖产物全部落在 src-tauri/target（backend/bridge 是 path 依赖，一并编译进来）。
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
-          workspaces: src-tauri -> target
+          workspaces: "src-tauri -> target"
 
       - name: Install Node
         uses: actions/setup-node@v4
@@ -66,9 +113,13 @@ jobs:
       - name: Install Tauri CLI
         run: npm install --global "@tauri-apps/cli@^2"
 
-      # 随包分发的 LGPL FFmpeg。binaries/ 不进仓库（约 115 MB），每次构建重新下。
+      # 随包分发的 LGPL FFmpeg。binaries/ 不进仓库（约 115 MB），只在缺失时下载。
+      # 必须在 src-tauri 目录下运行：脚本把文件下载到 cwd/binaries/，
+      # 而 tauri.conf.json 的 resources 引用的是 src-tauri/binaries/——
+      # 从仓库根运行会下载错位置，导致 src-tauri/binaries/ 缺失、tauri build 报错。
       - name: Download bundled FFmpeg
-        run: python src-tauri/scripts/fetch_ffmpeg.py
+        working-directory: src-tauri
+        run: python scripts/fetch_ffmpeg.py
 
       # 从 src-tauri 里跑，和 AGENTS.md 给人的命令保持一致——这样 CI 验的就是
       # 用户真正会执行的那条路径，包括 beforeBuildCommand 的工作目录。
@@ -76,10 +127,55 @@ jobs:
         working-directory: src-tauri
         run: tauri build
 
-      - name: Upload installer
+      # 安装包统一命名：vid2audio-<版本>-windows-x64-setup.exe
+      # （Tauri 默认产物是 Vid2Audio_<版本>_x64-setup.exe，这里重命名；
+      #   release 资产与 artifact 使用同一个名字）
+      - name: Rename installer
+        id: rename
+        shell: bash
+        run: |
+          nsis_dir="src-tauri/target/release/bundle/nsis"
+          installer="$(find "${nsis_dir}" -maxdepth 1 -name '*-setup.exe' | head -n1)"
+          if [[ -z "${installer}" ]]; then
+            echo "未找到 NSIS 安装包产物（${nsis_dir}）" >&2
+            exit 1
+          fi
+          asset="vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe"
+          mv "${installer}" "${nsis_dir}/${asset}"
+
+      - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: vid2audio-windows-nsis
-          path: src-tauri/target/release/bundle/nsis/*-setup.exe
+          path: src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
           if-no-files-found: error
           retention-days: 14
+
+      # ==================== 发布 GitHub Release ====================
+      # 默认步骤语义：构建链路任一步失败都不会走到这里（没有 always()）。
+      # dispatch 发布一个已存在的版本会失败，这是有意的——防止重复发布。
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ steps.version.outputs.version }}"
+          name: "Vid2Audio v${{ steps.version.outputs.version }}"
+          files: src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+          fail_on_unmatched_files: true
+          prerelease: ${{ inputs.prerelease || false }}
+          body: |
+            ## Vid2Audio v${{ steps.version.outputs.version }}（Windows）
+
+            - **版本号**：v${{ steps.version.outputs.version }}
+            - **构建时间**：${{ steps.meta.outputs.build_time }}
+            - **提交**：`${{ steps.meta.outputs.sha_short }}`（${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}）
+            - **安装包**：`vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe`
+
+            包含：
+            - 完整 Tauri + NSIS 打包
+            - 随包 FFmpeg（约 115 MB）
+            - 故事机 / 车机 播放优化（FAT 排序）
+            - 跨平台 GUI（Tauri v2 + Rust backend）
+
+            安装包命名规则：`vid2audio-<版本>-windows-x64-setup.exe`。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

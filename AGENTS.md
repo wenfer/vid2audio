@@ -36,8 +36,8 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 - `docker/`: Dockerfile and compose files.
   - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
   - `docker-compose.yml`: default self-contained deployment.
-- `.github/workflows/docker-ghcr.yml`: multi-arch GHCR image publishing.
-- `.github/workflows/desktop-windows.yml`: Windows NSIS installer, on `v*.*.*` tags and manual dispatch.
+- `.github/workflows/desktop-windows.yml`: the only release pipeline — Windows NSIS installer (`vid2audio-<version>-windows-x64-setup.exe`), on `v*.*.*` tags and manual dispatch.
+- `.github/workflows/docker-ghcr.yml`: disabled (`on: []`); CI no longer builds Docker images.
 - `docs/PRD-vid2audio.md`: product requirements and design reference.
 
 ## Common Commands
@@ -93,8 +93,10 @@ Requires the Tauri CLI (`cargo install tauri-cli --version '^2'`) plus the MSVC
 toolchain and WebView2 runtime on Windows. Tauri cannot bundle a Windows
 installer from Linux except through the NSIS cross-compilation path its own docs
 call a last resort, so `.github/workflows/desktop-windows.yml` builds the
-installer on a `windows-latest` runner instead — push a `v*.*.*` tag or dispatch
-it manually, then download the `vid2audio-windows-nsis` artifact.
+installer on a `windows-latest` runner instead — push a `v*.*.*` tag (must equal
+`v` + the `"version"` in `src-tauri/tauri.conf.json`) or dispatch it manually,
+then download the `vid2audio-windows-nsis` artifact. Released assets are renamed
+to `vid2audio-<version>-windows-x64-setup.exe`.
 
 `beforeBuildCommand` pins its `cwd` explicitly and must keep doing so. The CLI
 runs the hook in `resolve_frontend_dir()`, which looks for a `package.json` and
@@ -191,33 +193,29 @@ Base URL: `/api/v1`
 - `PUT /settings`
 - `GET /system/status`
 
-## Docker and Publishing
+## Releases (GitHub Actions)
 
-GitHub Actions builds and publishes multi-arch images to:
+The only CI pipeline is `.github/workflows/desktop-windows.yml` — it builds the
+Windows NSIS installer on a `windows-latest` runner and publishes it as a GitHub
+Release. Docker images are no longer built by CI (`docker-ghcr.yml` is disabled
+with `on: []`); local `docker compose -f docker/docker-compose.yml up --build`
+still works for development.
 
-```text
-ghcr.io/wenfer/vid2audio:vX.Y.Z
-ghcr.io/wenfer/vid2audio:latest
-```
+Release rules:
 
-Supported platforms:
-
-- `linux/amd64`
-- `linux/arm64`
-
-Workflow triggers:
-
-- Tags matching `v*.*.*`; the tag must match `backend/Cargo.toml`
-- Pull requests to `main` build only, without pushing
-- Manual `workflow_dispatch`
-
-GHCR authentication:
-
-- The workflow uses `GITHUB_TOKEN` by default and requests `packages: write`.
-- If GHCR rejects pushes with `permission_denied: write_package`, set repository Actions workflow permissions to read/write.
-- For org or package permission issues, add `GHCR_TOKEN` with `write:packages` and `read:packages`; optionally add `GHCR_USERNAME` when the PAT owner differs from the repository owner.
-- The default Dockerfile bundles Debian FFmpeg and ffprobe.
-- The runtime image contains the stripped Rust binary, Vue output, and Debian FFmpeg. Versioned and `latest` tags point to the same amd64/arm64 manifest.
+- Triggered by a `v*.*.*` tag, or by manual `workflow_dispatch` (which requires a
+  `version` input and offers a `prerelease` flag).
+- The version's single source of truth is the `"version"` in `src-tauri/tauri.conf.json`.
+  The tag must be exactly `v{version}`, and a manually entered version must match
+  too — the workflow fails otherwise, so a mislabeled package cannot be published.
+- Every bash-style step sets `shell: bash` explicitly; the Windows runner's default
+  shell is pwsh and would choke on `[[ ]]` / `$GITHUB_OUTPUT` scripts.
+- `fetch_ffmpeg.py` runs with `working-directory: src-tauri` (it downloads into
+  `cwd/binaries/`, and `tauri.conf.json` bundles `binaries/` relative to `src-tauri`).
+- Installer naming: `vid2audio-<version>-windows-x64-setup.exe`, renamed from
+  Tauri's default `Vid2Audio_<version>_x64-setup.exe`; the release asset and the
+  `vid2audio-windows-nsis` artifact share the same name.
+- Publishing a version whose tag already exists fails on purpose — no duplicate releases.
 
 ## Before Finishing a Change
 
