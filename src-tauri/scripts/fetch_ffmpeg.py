@@ -38,10 +38,11 @@ RELEASE = "ffmpeg-n7.1-latest-win64-lgpl-shared-7.1.zip"
 URL = f"https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/{RELEASE}"
 
 WANTED_EXES = {"ffmpeg.exe", "ffprobe.exe"}
-# avdevice 是摄像头/麦克风采集，本项目只读文件，7.7 MB 白搭。
-# 其余都要留着：avfilter 提供 loudnorm（片头响度归一化）和 lavfi 虚拟输入，
-# 少了它生成静音片头和响度处理都会失败。
-SKIP_DLLS = {"avdevice"}
+# 一个 dll 都不能跳过：shared 构建的 ffmpeg.exe 在 PE 导入表里链接了全部 lib
+# （含 avdevice-61.dll）。Windows 加载器启动 exe 时会解析整张导入表，缺任何
+# 一个都直接报"找不到 avdevice-61.dll，无法继续执行代码"——曾为省 7.7 MB
+# 跳过 avdevice，结果安装后 ffmpeg.exe 根本起不来。
+SKIP_DLLS = set()
 # 许可证文本必须随二进制分发。
 LICENSE_SUFFIXES = (".txt", "LICENSE", "COPYING")
 
@@ -75,7 +76,11 @@ def main():
     args = parser.parse_args()
 
     TARGET.mkdir(parents=True, exist_ok=True)
-    if not args.force and all((TARGET / name).is_file() for name in WANTED_EXES):
+    if (
+        not args.force
+        and all((TARGET / name).is_file() for name in WANTED_EXES)
+        and any(TARGET.glob("*.dll"))  # 旧下载可能缺 avdevice-61.dll，无 dll 就重下
+    ):
         print(f"{TARGET} 下已有 ffmpeg/ffprobe，跳过（--force 可强制重下）")
         return 0
 

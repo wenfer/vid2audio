@@ -1,6 +1,6 @@
 [package]
 name = "vid2audio-desktop"
-version = "0.2.4"
+version = "0.2.5"
 description = "Vid2Audio 桌面版"
 edition = "2024"
 
