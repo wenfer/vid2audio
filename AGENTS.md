@@ -212,8 +212,8 @@ Release rules:
   too — the workflow fails otherwise, so a mislabeled package cannot be published.
 - Every bash-style step sets `shell: bash` explicitly; the Windows runner's default
   shell is pwsh and would choke on `[[ ]]` / `$GITHUB_OUTPUT` scripts.
-- `fetch_ffmpeg.py` runs with `working-directory: src-tauri` (it downloads into
-  `cwd/binaries/`, and `tauri.conf.json` bundles `binaries/` relative to `src-tauri`).
+- `fetch_ffmpeg.py` resolves `src-tauri/binaries/` from its own script path (no
+  cwd dependency), matching the `binaries/` resource that `tauri.conf.json` bundles.
 - Installer naming: `vid2audio-<version>-windows-x64-setup.exe`, renamed from
   Tauri's default `Vid2Audio_<version>_x64-setup.exe`; the release asset and the
   `vid2audio-windows-nsis` artifact share the same name.

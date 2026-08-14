@@ -114,9 +114,8 @@ jobs:
         run: npm install --global "@tauri-apps/cli@^2"
 
       # 随包分发的 LGPL FFmpeg。binaries/ 不进仓库（约 115 MB），只在缺失时下载。
-      # 必须在 src-tauri 目录下运行：脚本把文件下载到 cwd/binaries/，
-      # 而 tauri.conf.json 的 resources 引用的是 src-tauri/binaries/——
-      # 从仓库根运行会下载错位置，导致 src-tauri/binaries/ 缺失、tauri build 报错。
+      # 脚本按自身路径定位 src-tauri/binaries/（与 tauri.conf.json 的 resources
+      # 引用一致），working-directory 只影响日志可读性，不影响下载位置。
       - name: Download bundled FFmpeg
         working-directory: src-tauri
         run: python scripts/fetch_ffmpeg.py
