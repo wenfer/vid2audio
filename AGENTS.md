@@ -37,7 +37,7 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
   - `docker-compose.yml`: default self-contained deployment.
 - `.github/workflows/desktop-windows.yml`: the only release pipeline — Windows NSIS installer (`vid2audio-<version>-windows-x64-setup.exe`), on `v*.*.*` tags and manual dispatch.
-- `.github/workflows/docker-ghcr.yml`: disabled (`on: []`); CI no longer builds Docker images.
+- Docker images are not published by CI anymore: `.github/workflows/docker-ghcr.yml` was deleted. Do not re-add it with `on: []` — GitHub treats an empty trigger list as an invalid (but "active") workflow and creates a failing run on every push; delete the file instead.
 - `docs/PRD-vid2audio.md`: product requirements and design reference.
 
 ## Common Commands
@@ -197,8 +197,10 @@ Base URL: `/api/v1`
 
 The only CI pipeline is `.github/workflows/desktop-windows.yml` — it builds the
 Windows NSIS installer on a `windows-latest` runner and publishes it as a GitHub
-Release. Docker images are no longer built by CI (`docker-ghcr.yml` is disabled
-with `on: []`); local `docker compose -f docker/docker-compose.yml up --build`
+Release. Docker images are no longer published by CI (the old
+`.github/workflows/docker-ghcr.yml` was deleted; do not bring it back with
+`on: []` — an empty trigger list is parsed as an invalid active workflow that
+fails on every push). Local `docker compose -f docker/docker-compose.yml up --build`
 still works for development.
 
 Release rules:

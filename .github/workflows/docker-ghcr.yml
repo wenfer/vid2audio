@@ -1,8 +1,0 @@
-# ============================================================================
-# 已停用（2025-05）：本仓库的 GitHub Actions 只构建并发布 Windows 桌面安装包，
-# 见 desktop-windows.yml。Docker 镜像（ghcr.io/wenfer/vid2audio）不再由 CI 构建，
-# 本地开发仍可用 `docker compose -f docker/docker-compose.yml up --build`。
-#
-# 如需恢复 Docker 发布，把本文件恢复为原来的完整 workflow 即可（git 历史中有）。
-# ============================================================================
-on: []
