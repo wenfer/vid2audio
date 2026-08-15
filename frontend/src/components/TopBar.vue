@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import WizardModal from './WizardModal.vue'
+import { useSystemStatus } from '../composables/useSystemStatus'
 
 const router = useRouter()
 const route = useRoute()
 const showWizard = ref(false)
+const { status, load } = useSystemStatus()
+onMounted(load)
 
 const navItems = [
   { path: '/workspace', label: '文件管理', icon: '📁' },
@@ -20,6 +23,7 @@ const navItems = [
       <div class="brand">
         <span class="brand-icon">🎵</span>
         <span>Vid2Audio</span>
+        <span v-if="status" class="brand-version" :title="`ffmpeg ${status.ffmpeg_available ? '可用' : '不可用'} · ffprobe ${status.ffprobe_available ? '可用' : '不可用'}`">v{{ status.version }}</span>
       </div>
     </div>
     <nav class="topbar-nav">
@@ -68,6 +72,13 @@ const navItems = [
   font-weight: 700;
 }
 .brand-icon { font-size: 22px; }
+.brand-version {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-left: 2px;
+  user-select: none;
+}
 .topbar-nav {
   display: flex;
   gap: 4px;

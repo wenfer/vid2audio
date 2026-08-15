@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { onMounted, ref } from 'vue'
 import { useSettings } from '../composables/useSettings'
+import { useSystemStatus } from '../composables/useSystemStatus'
 import { useToast } from '../composables/useToast'
 import { isDesktop, pickDirectory } from '../desktop'
 
 const { settings, save } = useSettings()
+const { status, load: loadStatus } = useSystemStatus()
 const { show: showToast } = useToast()
 const saving = ref(false)
 const desktop = isDesktop()
+onMounted(loadStatus)
 
 /** 桌面版：用系统文件夹对话框填路径，省得手输。 */
 async function browseScanDirectory() {
@@ -135,6 +138,11 @@ async function saveSettings() {
     <div class="card-actions">
       <button class="btn btn-primary" :disabled="saving" @click="saveSettings">{{ saving ? '保存中…' : '✓ 保存设置' }}</button>
     </div>
+    <div v-if="status" class="about">
+      <span class="about-item">版本 v{{ status.version }}</span>
+      <span class="about-item" :class="{ ok: status.ffmpeg_available }">FFmpeg {{ status.ffmpeg_available ? '✅ 可用' : '❌ 不可用' }}</span>
+      <span class="about-item" :class="{ ok: status.ffprobe_available }">ffprobe {{ status.ffprobe_available ? '✅ 可用' : '❌ 不可用' }}</span>
+    </div>
   </section>
 </template>
 
@@ -145,4 +153,14 @@ async function saveSettings() {
 /* 输入框 + 「浏览」按钮并排；按钮只在桌面版出现。 */
 .path-field { display: flex; align-items: center; gap: 6px; }
 .path-field input { flex: 1; min-width: 0; }
+.about {
+  display: flex;
+  gap: 16px;
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px dashed var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.about-item { white-space: nowrap; }
 </style>

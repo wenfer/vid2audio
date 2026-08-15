@@ -117,3 +117,12 @@ export interface ExtractJobItem {
 export interface ExtractJobDetail extends ExtractJob {
   items: ExtractJobItem[]
 }
+
+export interface SystemStatus {
+  version: string
+  ffmpeg_available: boolean
+  ffprobe_available: boolean
+  database_path: string
+  input_directories: string[]
+  output_directory: string
+}

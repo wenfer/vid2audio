@@ -85,4 +85,7 @@ export const api = {
     `${BASE}/preview/${videoId}?track=${track}&duration=10&start=${start}&_=${Date.now()}`,
   jobItemAudioUrl: (jobId: string, itemId: string) =>
     `${BASE}/extract/jobs/${jobId}/items/${itemId}/audio?_=${Date.now()}`,
+
+  // System
+  getSystemStatus: () => request<import('../types').SystemStatus>('/system/status'),
 }
