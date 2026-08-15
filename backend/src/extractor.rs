@@ -528,7 +528,10 @@ async fn run_command(
         if output.status.success() {
             Ok(())
         } else {
-            bail!("{}", full_command_error(output.status.code(), &output.stderr))
+            bail!(
+                "{}",
+                full_command_error(output.status.code(), &output.stderr)
+            )
         }
     })
     .await??;
