@@ -78,3 +78,37 @@ export async function revealInFileManager(path: string): Promise<void> {
     /* 打不开就算了 */
   }
 }
+
+/** 自动更新检查结果。 */
+export type UpdateCheckResult =
+  | { state: 'current' }
+  | { state: 'available'; version: string }
+  | { state: 'error'; message: string }
+
+/**
+ * 检查更新（Tauri updater）。浏览器版不支持，直接返回 error。
+ * 更新源是 GitHub Release 上的 latest.json（见 tauri.conf.json 的 updater.endpoints）。
+ */
+export async function checkForUpdates(): Promise<UpdateCheckResult> {
+  if (!IS_DESKTOP) return { state: 'error', message: '浏览器版不支持自动更新' }
+  try {
+    const { check } = await import('@tauri-apps/plugin-updater')
+    const update = await check()
+    return update ? { state: 'available', version: update.version } : { state: 'current' }
+  } catch (e) {
+    return { state: 'error', message: (e as Error).message }
+  }
+}
+
+/**
+ * 下载并安装最新版。安装完成后需要重启应用生效。
+ * 非桌面返回 false；无可用更新返回 false。
+ */
+export async function installUpdate(): Promise<boolean> {
+  if (!IS_DESKTOP) return false
+  const { check } = await import('@tauri-apps/plugin-updater')
+  const update = await check()
+  if (!update) return false
+  await update.downloadAndInstall()
+  return true
+}

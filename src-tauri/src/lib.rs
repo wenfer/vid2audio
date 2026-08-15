@@ -45,6 +45,7 @@ pub fn run() -> anyhow::Result<()> {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .register_asynchronous_uri_scheme_protocol(SCHEME, move |_context, request, responder| {
             let Some(router) = backend.router.get().cloned() else {
                 // 窗口是在 setup 里、router 就绪之后才建的，正常不会走到这里。

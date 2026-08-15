@@ -120,11 +120,26 @@ jobs:
         working-directory: src-tauri
         run: python scripts/fetch_ffmpeg.py
 
-      # 从 src-tauri 里跑，和 AGENTS.md 给人的命令保持一致——这样 CI 验的就是
-      # 用户真正会执行的那条路径，包括 beforeBuildCommand 的工作目录。
+      # ==================== 构建 ====================
+      # updater 已启用（bundle.updater.active），tauri build 必须用私钥对安装包
+      # 签名，否则构建失败。私钥不进仓库，配在仓库 Secrets 的
+      # TAURI_SIGNING_PRIVATE_KEY（生成：npx @tauri-apps/cli signer generate）。
+      - name: Check updater signing key
+        shell: bash
+        run: |
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]]; then
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY secret，无法签名更新包。" >&2
+            echo "生成密钥：npx @tauri-apps/cli signer generate -w ~/.tauri/vid2audio.key" >&2
+            echo "然后把该文件内容加入仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY（公钥已写入 tauri.conf.json）" >&2
+            exit 1
+          fi
+
       - name: Build installer
         working-directory: src-tauri
         run: tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       # 安装包统一命名：vid2audio-<版本>-windows-x64-setup.exe
       # （Tauri 默认产物是 Vid2Audio_<版本>_x64-setup.exe，这里重命名；
@@ -141,12 +156,38 @@ jobs:
           fi
           asset="vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe"
           mv "${installer}" "${nsis_dir}/${asset}"
+          # updater 签名文件跟随安装包重命名，保持 basename 一致。
+          sig="$(find "${nsis_dir}" -maxdepth 1 -name '*-setup.exe.sig' | head -n1)"
+          if [[ -n "${sig}" ]]; then
+            mv "${sig}" "${nsis_dir}/${asset}.sig"
+          fi
+
+      # 生成 updater 更新清单 latest.json（Tauri v2 格式），随 release 一起上传。
+      # 应用端 endpoints 指向 releases/latest/download/latest.json，因此每次发布
+      # 都用同一个文件名覆盖即可。
+      - name: Generate updater manifest
+        id: manifest
+        shell: bash
+        run: |
+          nsis_dir="src-tauri/target/release/bundle/nsis"
+          asset="vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe"
+          sig_file="${nsis_dir}/${asset}.sig"
+          if [[ ! -f "${sig_file}" ]]; then
+            echo "未找到签名文件 ${sig_file}" >&2
+            exit 1
+          fi
+          python3 src-tauri/scripts/make_updater_manifest.py \
+            "${{ steps.version.outputs.version }}" "${sig_file}" > "${nsis_dir}/latest.json"
+          echo "latest.json: $(cat "${nsis_dir}/latest.json")"
 
       - name: Upload installer artifact
         uses: actions/upload-artifact@v4
         with:
           name: vid2audio-windows-nsis
-          path: src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+          path: |
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           if-no-files-found: error
           retention-days: 14
 
@@ -158,7 +199,10 @@ jobs:
         with:
           tag_name: "v${{ steps.version.outputs.version }}"
           name: "Vid2Audio v${{ steps.version.outputs.version }}"
-          files: src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+          files: |
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe.sig
+            src-tauri/target/release/bundle/nsis/latest.json
           fail_on_unmatched_files: true
           prerelease: ${{ inputs.prerelease || false }}
           body: |

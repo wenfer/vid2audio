@@ -3,14 +3,43 @@ import { onMounted, ref } from 'vue'
 import { useSettings } from '../composables/useSettings'
 import { useSystemStatus } from '../composables/useSystemStatus'
 import { useToast } from '../composables/useToast'
-import { isDesktop, pickDirectory } from '../desktop'
+import { checkForUpdates, installUpdate, isDesktop, pickDirectory } from '../desktop'
 
 const { settings, save } = useSettings()
 const { status, load: loadStatus } = useSystemStatus()
 const { show: showToast } = useToast()
 const saving = ref(false)
 const desktop = isDesktop()
+const updateState = ref<'idle' | 'checking' | 'current' | 'available' | 'installing' | 'error'>('idle')
+const updateVersion = ref('')
+const updateError = ref('')
 onMounted(loadStatus)
+
+async function checkUpdate() {
+  updateState.value = 'checking'
+  const result = await checkForUpdates()
+  if (result.state === 'available') {
+    updateState.value = 'available'
+    updateVersion.value = result.version
+  } else if (result.state === 'current') {
+    updateState.value = 'current'
+  } else {
+    updateState.value = 'error'
+    updateError.value = result.message
+  }
+}
+
+async function doUpdate() {
+  updateState.value = 'installing'
+  try {
+    await installUpdate()
+    showToast('更新已下载并安装，请重启应用生效', 'success')
+    updateState.value = 'current'
+  } catch (e: unknown) {
+    updateState.value = 'error'
+    updateError.value = (e as Error).message
+  }
+}
 
 /** 桌面版：用系统文件夹对话框填路径，省得手输。 */
 async function browseScanDirectory() {
@@ -118,6 +147,19 @@ async function saveSettings() {
       <span class="about-item">版本 v{{ status.version }}</span>
       <span class="about-item" :class="{ ok: status.ffmpeg_available }">FFmpeg {{ status.ffmpeg_available ? '✅ 可用' : '❌ 不可用' }}</span>
       <span class="about-item" :class="{ ok: status.ffprobe_available }">ffprobe {{ status.ffprobe_available ? '✅ 可用' : '❌ 不可用' }}</span>
+      <span class="about-item update-area">
+        <template v-if="desktop">
+          <button v-if="updateState === 'idle' || updateState === 'current'" class="btn btn-ghost btn-sm" @click="checkUpdate">🔄 检查更新</button>
+          <span v-else-if="updateState === 'checking'">检查更新中…</span>
+          <template v-else-if="updateState === 'available'">
+            <span class="update-available">发现新版本 v{{ updateVersion }}</span>
+            <button class="btn btn-primary btn-sm" @click="doUpdate">立即更新</button>
+          </template>
+          <span v-else-if="updateState === 'installing'">正在下载并安装更新…</span>
+          <span v-else-if="updateState === 'error'" class="update-error">更新检查失败：{{ updateError }}</span>
+        </template>
+        <span v-else class="text-muted">浏览器版不支持自动更新</span>
+      </span>
     </div>
   </section>
 </template>
@@ -139,4 +181,7 @@ async function saveSettings() {
   color: var(--text-secondary);
 }
 .about-item { white-space: nowrap; }
+.update-area { display: flex; align-items: center; gap: 8px; }
+.update-available { color: var(--accent-text); font-weight: 600; }
+.update-error { color: var(--danger-text); }
 </style>
