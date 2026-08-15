@@ -35,18 +35,14 @@
         "installMode": "currentUser",
         "languages": ["SimpChinese", "English"]
       }
-    },
-    "updater": {
-      "active": true,
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxMjc1MkIyNkRBRDlCQUIKUldTcm02MXRzbEluVVVqWnVqUXRlcmU5dnNxakk5V0lZTGsrK1BHNldwZ1MwNGpvTGZ5UXViZ0sK",
-      "endpoints": [
-        "https://github.com/wenfer/vid2audio/releases/latest/download/latest.json"
-      ]
     }
   },
   "plugins": {
     "tauri-plugin-updater": {
-      "enabled": true
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxMjc1MkIyNkRBRDlCQUIKUldTcm02MXRzbEluVVVqWnVqUXRlcmU5dnNxakk5V0lZTGsrK1BHNldwZ1MwNGpvTGZ5UXViZ0sK",
+      "endpoints": [
+        "https://github.com/wenfer/vid2audio/releases/latest/download/latest.json"
+      ]
     }
   }
 }

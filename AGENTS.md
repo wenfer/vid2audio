@@ -218,12 +218,13 @@ Release rules:
   Tauri's default `Vid2Audio_<version>_x64-setup.exe`; the release asset and the
   `vid2audio-windows-nsis` artifact share the same name.
 - Publishing a version whose tag already exists fails on purpose — no duplicate releases.
-- **Auto-update (tauri-plugin-updater)**: `bundle.updater` in `tauri.conf.json` is
-  active; the pubkey is committed there and the **private key lives only in the
-  repo Secrets as `TAURI_SIGNING_PRIVATE_KEY`** (generate with
-  `npx @tauri-apps/cli signer generate`; never commit it). `tauri build` refuses
-  to run without the key, so the workflow checks it first. Each release uploads
-  the `.sig` signature plus `latest.json` (built by
+- **Auto-update (tauri-plugin-updater)**: configured under
+  `plugins.tauri-plugin-updater` in `tauri.conf.json` (pubkey + GitHub
+  latest.json endpoint); the pubkey is committed there and the **private key
+  lives only in the repo Secrets as `TAURI_SIGNING_PRIVATE_KEY`** (generate
+  with `npx @tauri-apps/cli signer generate`; never commit it). `tauri build`
+  refuses to run without the key, so the workflow checks it first. Each release
+  uploads the `.sig` signature plus `latest.json` (built by
   `src-tauri/scripts/make_updater_manifest.py`); the app checks
   `https://github.com/wenfer/vid2audio/releases/latest/download/latest.json`
   and the settings page offers 检查更新 / 立即更新 (download-and-install, then
