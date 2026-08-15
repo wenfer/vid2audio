@@ -833,19 +833,6 @@ async fn create_job(
     Json(mut request): Json<ExtractRequest>,
 ) -> ApiResult<Json<ExtractJob>> {
     let settings = state.db.load_settings().await?;
-    request.generate_intro &= settings.tts_enabled;
-    if request.intro_voice.is_empty() {
-        request.intro_voice = settings.tts_voice.clone();
-    }
-    if request.tts_provider.is_none() {
-        request.tts_provider = Some(settings.tts_provider.clone());
-    }
-    if request.tts_rate.is_none() {
-        request.tts_rate = Some(settings.tts_rate.clone());
-    }
-    if request.tts_failure_mode.is_none() {
-        request.tts_failure_mode = Some(settings.tts_failure_mode.clone());
-    }
     if request.filesystem_sorting.is_none() {
         request.filesystem_sorting = Some(settings.filesystem_sorting.clone());
     }
@@ -916,12 +903,6 @@ async fn create_job(
             .await?,
         ));
     };
-    if request.intro_text.is_none() {
-        request.intro_text = Some(settings.intro_text_template.replace(
-            "{collection_name}",
-            request.job_name.as_deref().unwrap_or(&collection.name),
-        ));
-    }
     let selected = request
         .selected_video_ids
         .as_ref()

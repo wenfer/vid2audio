@@ -1,10 +1,8 @@
 use crate::{
     db::Database,
-    media::{command_available, last_error, require_command},
+    media::{last_error, require_command},
     models::{AppSettings, Collection, ExtractRequest},
-    sorter::{
-        calculate_padding, compare_names, generate_filename, intro_filename, sanitize_filename_part,
-    },
+    sorter::{calculate_padding, compare_names, generate_filename, sanitize_filename_part},
 };
 use anyhow::{Context, Result, bail};
 use serde_json::json;
@@ -192,28 +190,10 @@ async fn run_job_inner(
         "lossless" => "320k",
         _ => "128k",
     };
-    let mut warnings = Vec::new();
+    let warnings = Vec::new();
     let mut output_files = Vec::new();
     let mut failures = Vec::new();
 
-    if request.generate_intro {
-        let path = output_dir.join(intro_filename(&collection.name, &extension));
-        // 继续执行时片头已经在上一轮生成过，不再重复合成。
-        if !path.exists()
-            && let Some(warning) = generate_intro(
-                request.intro_text.as_deref().unwrap_or(&collection.name),
-                &path,
-                &extension,
-                bitrate,
-                request.sample_rate,
-                request,
-                settings,
-            )
-            .await?
-        {
-            warnings.push(warning);
-        }
-    }
     let padding = calculate_padding(
         videos.len(),
         request.padding_digits.as_deref().unwrap_or("auto"),
@@ -505,147 +485,6 @@ pub async fn preview(
         output.as_os_str().into(),
     ]);
     run_command("ffmpeg", args, None).await
-}
-
-async fn generate_intro(
-    text: &str,
-    output: &Path,
-    extension: &str,
-    bitrate: &str,
-    sample_rate: i64,
-    request: &ExtractRequest,
-    settings: &AppSettings,
-) -> Result<Option<String>> {
-    let provider = request
-        .tts_provider
-        .as_deref()
-        .unwrap_or(&settings.tts_provider);
-    let failure_mode = request
-        .tts_failure_mode
-        .as_deref()
-        .unwrap_or(&settings.tts_failure_mode);
-    if provider == "disabled" {
-        return Ok(Some("片头语音已禁用。".into()));
-    }
-    if provider == "silent" {
-        silent_placeholder(output, extension, bitrate, sample_rate).await?;
-        return Ok(Some("已按配置使用静音片头占位。".into()));
-    }
-    if provider == "piper" && command_available("piper") {
-        let voice = if request.intro_voice.is_empty() {
-            &settings.tts_voice
-        } else {
-            &request.intro_voice
-        };
-        if let Some(model) = resolve_piper_model(voice) {
-            let raw = output.with_extension("piper.tmp.wav");
-            let result = run_command(
-                "piper",
-                vec![
-                    "--model".into(),
-                    model.as_os_str().into(),
-                    "--output_file".into(),
-                    raw.as_os_str().into(),
-                ],
-                Some(text.as_bytes().to_vec()),
-            )
-            .await;
-            if result.is_ok() {
-                let args = vec![
-                    "-y".into(),
-                    "-i".into(),
-                    raw.as_os_str().into(),
-                    "-af".into(),
-                    "loudnorm=I=-16:TP=-1.5:LRA=11".into(),
-                    "-c:a".into(),
-                    codec_for(extension)?.into(),
-                    "-b:a".into(),
-                    bitrate.into(),
-                    "-ar".into(),
-                    sample_rate.to_string().into(),
-                    "-ac".into(),
-                    "2".into(),
-                    output.as_os_str().into(),
-                ];
-                let normalized = run_command("ffmpeg", args, None).await;
-                let _ = tokio::fs::remove_file(&raw).await;
-                normalized?;
-                return Ok(None);
-            }
-        }
-    }
-    let reason = if provider == "piper" {
-        "Piper TTS 未安装或语音模型不存在。"
-    } else {
-        "未知 TTS 通道。"
-    };
-    match failure_mode {
-        "fail" => bail!("{reason}"),
-        "skip" => Ok(Some(format!("片头语音生成失败，已跳过片头: {reason}"))),
-        _ => {
-            silent_placeholder(output, extension, bitrate, sample_rate).await?;
-            Ok(Some(format!(
-                "片头语音生成失败，已使用 1 秒静音占位: {reason}"
-            )))
-        }
-    }
-}
-
-async fn silent_placeholder(
-    output: &Path,
-    extension: &str,
-    bitrate: &str,
-    sample_rate: i64,
-) -> Result<()> {
-    require_command("ffmpeg")?;
-    let mut args: Vec<OsString> = vec![
-        "-y".into(),
-        "-f".into(),
-        "lavfi".into(),
-        "-i".into(),
-        format!("anullsrc=channel_layout=stereo:sample_rate={sample_rate}").into(),
-        "-t".into(),
-        "1".into(),
-        "-c:a".into(),
-        codec_for(extension)?.into(),
-    ];
-    if !matches!(extension, "flac" | "wav") {
-        args.extend(["-b:a".into(), bitrate.into()]);
-    }
-    args.push(output.as_os_str().into());
-    run_command("ffmpeg", args, None).await
-}
-
-fn resolve_piper_model(voice: &str) -> Option<PathBuf> {
-    let direct = PathBuf::from(voice);
-    // 不用 is_absolute()：Windows 上 `/data/x.onnx` 有 root 无盘符，会被判成相对路径。
-    if direct.is_file() {
-        return Some(direct);
-    }
-    for root in [
-        crate::platform::default_data_dir().join("piper-voices"),
-        PathBuf::from("/app/data/piper-voices"),
-        PathBuf::from("data/piper-voices"),
-    ] {
-        for candidate in [
-            root.join(format!("{voice}.onnx")),
-            root.join(voice).join(format!("{voice}.onnx")),
-        ] {
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-        if root.is_dir()
-            && let Some(path) = walkdir::WalkDir::new(root)
-                .into_iter()
-                .filter_map(Result::ok)
-                .map(|e| e.into_path())
-                .find(|p| p.extension().is_some_and(|e| e == "onnx"))
-        {
-            return Some(path);
-        }
-    }
-    None
 }
 
 fn codec_for(extension: &str) -> Result<&'static str> {

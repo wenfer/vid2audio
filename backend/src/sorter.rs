@@ -128,14 +128,6 @@ pub fn generate_filename(index: usize, title: &str, extension: &str, padding: us
     )
 }
 
-pub fn intro_filename(name: &str, extension: &str) -> String {
-    format!(
-        "000_{}.{}",
-        sanitize_filename_part(name),
-        extension.trim_start_matches('.')
-    )
-}
-
 fn natural_chunks(value: &str) -> Vec<(bool, String)> {
     let mut chunks = Vec::new();
     let mut current = String::new();

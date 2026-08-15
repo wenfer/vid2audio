@@ -110,30 +110,6 @@ async function saveSettings() {
           </label>
         </div>
       </fieldset>
-
-      <!-- TTS -->
-      <fieldset class="settings-group">
-        <legend>TTS 片头</legend>
-        <div class="form-row">
-          <label class="form-field"><span class="field-label">TTS 通道</span>
-            <select v-model="settings.tts_provider">
-              <option value="piper">Piper 离线 TTS</option>
-              <option value="silent">静音占位</option>
-              <option value="disabled">禁用片头</option>
-            </select>
-          </label>
-          <label class="form-field"><span class="field-label">失败策略</span>
-            <select v-model="settings.tts_failure_mode">
-              <option value="silent">静音占位</option><option value="skip">跳过</option><option value="fail">终止</option>
-            </select>
-          </label>
-          <label class="form-field"><span class="field-label">语音模型</span><input v-model="settings.tts_voice" placeholder="zh_CN-huayan-medium" /></label>
-          <label class="form-field"><span class="field-label">语速</span><input v-model="settings.tts_rate" placeholder="+0%" /></label>
-        </div>
-        <div class="form-row">
-          <label class="form-field span-2"><span class="field-label">片头文本模板</span><input v-model="settings.intro_text_template" /></label>
-        </div>
-      </fieldset>
     </div>
     <div class="card-actions">
       <button class="btn btn-primary" :disabled="saving" @click="saveSettings">{{ saving ? '保存中…' : '✓ 保存设置' }}</button>

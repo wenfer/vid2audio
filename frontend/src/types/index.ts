@@ -45,12 +45,6 @@ export interface AppSettings {
   default_output_format: string
   default_quality: string
   default_sample_rate: number
-  tts_enabled: boolean
-  tts_provider: string
-  tts_voice: string
-  tts_rate: string
-  tts_failure_mode: string
-  intro_text_template: string
   output_directory: string
   padding_digits: string
   filesystem_sorting: string

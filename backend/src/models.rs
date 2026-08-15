@@ -19,12 +19,6 @@ fn default_quality() -> String {
 fn default_sample_rate() -> i64 {
     44_100
 }
-fn default_true() -> bool {
-    true
-}
-fn default_intro_voice() -> String {
-    "zh_CN-huayan-medium".into()
-}
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AudioTrack {
@@ -95,12 +89,6 @@ pub struct AppSettings {
     pub default_output_format: String,
     pub default_quality: String,
     pub default_sample_rate: i64,
-    pub tts_enabled: bool,
-    pub tts_provider: String,
-    pub tts_voice: String,
-    pub tts_rate: String,
-    pub tts_failure_mode: String,
-    pub intro_text_template: String,
     pub output_directory: String,
     pub padding_digits: String,
     pub filesystem_sorting: String,
@@ -131,12 +119,6 @@ impl Default for AppSettings {
             default_output_format: "mp3".into(),
             default_quality: "standard".into(),
             default_sample_rate: 44_100,
-            tts_enabled: true,
-            tts_provider: "piper".into(),
-            tts_voice: "zh_CN-huayan-medium".into(),
-            tts_rate: "+0%".into(),
-            tts_failure_mode: "silent".into(),
-            intro_text_template: "{collection_name}".into(),
             output_directory: crate::platform::default_output_dir()
                 .to_string_lossy()
                 .into_owned(),
@@ -175,14 +157,6 @@ pub struct ExtractRequest {
     pub quality: String,
     #[serde(default = "default_sample_rate")]
     pub sample_rate: i64,
-    #[serde(default = "default_true")]
-    pub generate_intro: bool,
-    #[serde(default = "default_intro_voice")]
-    pub intro_voice: String,
-    pub tts_provider: Option<String>,
-    pub tts_rate: Option<String>,
-    pub tts_failure_mode: Option<String>,
-    pub intro_text: Option<String>,
     pub selected_video_ids: Option<Vec<String>>,
     #[serde(default)]
     pub trim_start_seconds: f64,

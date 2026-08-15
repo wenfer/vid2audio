@@ -14,7 +14,7 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
   - `src/models.rs`: Serde request/response models.
   - `src/scanner.rs`: video discovery, grouping, and filtering.
   - `src/media.rs`: ffprobe parsing.
-  - `src/extractor.rs`: FFmpeg extraction, preview, and TTS.
+  - `src/extractor.rs`: FFmpeg extraction, preview, and job progress.
   - `src/platform.rs`: all cross-platform differences (paths, command lookup, filename rules).
   - `src/sorter.rs`: story-player-safe filename ordering.
   - `static/`: generated Vue output, not committed.
