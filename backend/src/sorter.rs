@@ -31,6 +31,7 @@ pub fn sanitize_filename_part(value: &str) -> String {
         .replace(':', "：")
         .replace('*', "")
         .replace('?', "？")
+        .replace('%', "％") // ffmpeg 把输出文件名里的 % 当序列号格式解析，非法 %X 会报 Invalid argument
         .replace(['"', '<', '>', '|'], "");
     cleaned = SPACES
         .replace_all(&cleaned, " ")
