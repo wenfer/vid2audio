@@ -52,13 +52,13 @@ pub fn sanitize_filename_part(value: &str) -> String {
         // 视频标题里，Windows 上文件名含控制字符时 ffmpeg 打开输出文件直接
         // 报 Invalid argument。
         .filter(|c| !c.is_control() && !is_invisible_unicode(*c))
-        .collect();
+        .collect::<String>();
     cleaned = SPACES
         .replace_all(&cleaned, " ")
         .trim_matches(&[' ', '.', '_', '-'][..])
         .chars()
         .take(50)
-        .collect();
+        .collect::<String>();
     if cleaned.is_empty() {
         "未命名".into()
     } else {
