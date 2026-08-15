@@ -20,6 +20,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": "v1Compatible",
     "category": "Utility",
     "shortDescription": "儿童视频集合的音频提取工具",
     "longDescription": "Vid2Audio 从儿童视频收藏中批量提取音频，支持按剧集编号排序、多音轨选择、试听与打包下载。",
@@ -39,7 +40,6 @@
   },
   "plugins": {
     "tauri-plugin-updater": {
-      "createUpdaterArtifacts": "v1Compatible",
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCRkE1Qjk5NkZDMjRFMDYKUldRR1RzSnZtVnY2T3pqVndSL1J3RmVSUkFsMndHQlpuZHNrbjVTZHZsUjc5YXVhT2ZlenVOSmIK",
       "endpoints": [
         "https://github.com/wenfer/vid2audio/releases/latest/download/latest.json"
