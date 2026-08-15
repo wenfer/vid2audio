@@ -190,7 +190,7 @@ async fn run_job_inner(
         "lossless" => "320k",
         _ => "128k",
     };
-    let warnings = Vec::new();
+    let warnings: Vec<serde_json::Value> = Vec::new();
     let mut output_files = Vec::new();
     let mut failures = Vec::new();
 
