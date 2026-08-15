@@ -4,11 +4,12 @@ import { api } from '../api'
 import { useToast } from '../composables/useToast'
 import { statusBadgeClass, statusLabel } from '../utils'
 import { confirmAction } from '../desktop'
-import type { ExtractJob, ExtractJobDetail } from '../types'
+import type { ExtractJob, ExtractJobDetail, ExtractJobItem } from '../types'
 
 const { show: showToast } = useToast()
 const jobs = ref<ExtractJob[]>([])
 const selectedJob = ref<ExtractJobDetail | null>(null)
+const logItem = ref<ExtractJobItem | null>(null)
 const showModal = ref(false)
 const busyId = ref('')
 let pollTimer: ReturnType<typeof setInterval> | null = null
@@ -252,9 +253,31 @@ function formatElapsed(seconds?: number): string {
               <div><span class="badge" :class="statusBadgeClass(item.status)">{{ statusLabel(item.status) }}</span></div>
               <div class="truncate">{{ item.title || item.source_path }}</div>
               <div class="elapsed" :class="{ pending: item.duration_seconds == null }">{{ item.status === 'processing' ? '计时中…' : formatElapsed(item.duration_seconds) }}</div>
-              <div class="truncate text-muted">{{ item.output_path || item.error_message || '' }}</div>
+              <div class="truncate text-muted">
+                <button v-if="item.error_message" class="btn btn-ghost btn-sm" title="查看运行日志" @click="logItem = item">📋 日志</button>
+                <template v-else>{{ item.output_path || '' }}</template>
+              </div>
             </div>
           </div>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+
+  <Teleport to="body">
+    <div v-if="logItem" class="modal-overlay" @click.self="logItem = null">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-header">
+          <div>
+            <h2>运行日志</h2>
+            <p class="text-muted text-sm">{{ logItem.title || logItem.source_path }}</p>
+          </div>
+          <div class="modal-actions">
+            <button class="btn btn-ghost btn-sm" @click="logItem = null">关闭</button>
+          </div>
+        </div>
+        <div class="modal-body">
+          <pre class="log-body">{{ logItem.error_message }}</pre>
         </div>
       </div>
     </div>
@@ -280,6 +303,21 @@ function formatElapsed(seconds?: number): string {
 
 .modal-overlay { position: fixed; inset: 0; z-index: 90; display: grid; place-items: center; background: rgba(15,23,42,0.4); backdrop-filter: blur(4px); }
 .modal-dialog { position: relative; width: min(960px, calc(100vw - 40px)); border-radius: var(--radius-xl); background: var(--bg-elevated); box-shadow: var(--shadow-xl); overflow: hidden; }
+.modal-lg { width: min(760px, calc(100vw - 40px)); }
+.log-body {
+  max-height: 60vh;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--bg-subtle);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  padding: 12px;
+  margin: 0;
+}
 .modal-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; padding: 20px 24px; border-bottom: 1px solid var(--border); }
 .modal-header h2 { font-size: 16px; font-weight: 600; }
 .modal-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }

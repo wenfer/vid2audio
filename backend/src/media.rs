@@ -151,6 +151,27 @@ pub fn command_error(code: Option<i32>, stderr: &[u8]) -> String {
     }
 }
 
+/// 提取失败时存进任务明细的完整错误：两行摘要 + 完整 stderr（截断）。
+///
+/// `last_error` 只留最后两行，排查时常常不够——比如 ffmpeg 报
+/// "Error opening output files: Invalid argument" 时，具体是哪条路径、为什么
+/// 打不开，要看 stderr 前面的行。完整日志让任务详情页能直接展示。
+pub fn full_command_error(code: Option<i32>, stderr: &[u8]) -> String {
+    let summary = command_error(code, stderr);
+    let detail = String::from_utf8_lossy(stderr).trim();
+    if detail.is_empty() {
+        return summary;
+    }
+    let mut full = summary;
+    full.push_str("\n\n--- 完整日志 ---\n");
+    let take: String = detail.chars().take(3000).collect();
+    full.push_str(&take);
+    if detail.chars().count() > 3000 {
+        full.push_str("\n…（日志过长已截断）");
+    }
+    full
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

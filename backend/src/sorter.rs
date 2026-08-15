@@ -24,6 +24,20 @@ pub fn calculate_padding(total: usize, configured: &str) -> usize {
     if total < 1000 { 3 } else { 4 }
 }
 
+/// 不可见/格式类 Unicode：零宽字符、bidi 控制符、软连字符、行分隔符等。
+/// 这些字符合法但看不见，混进文件名既难排查又会让部分程序（如 ffmpeg）
+/// 打开文件失败，一律过滤。
+fn is_invisible_unicode(c: char) -> bool {
+    matches!(
+        c,
+        '\u{00AD}'
+            | '\u{200B}'..='\u{200F}'
+            | '\u{2028}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+    )
+}
+
 pub fn sanitize_filename_part(value: &str) -> String {
     let mut cleaned = value
         .trim()
@@ -32,7 +46,13 @@ pub fn sanitize_filename_part(value: &str) -> String {
         .replace('*', "")
         .replace('?', "？")
         .replace('%', "％") // ffmpeg 把输出文件名里的 % 当序列号格式解析，非法 %X 会报 Invalid argument
-        .replace(['"', '<', '>', '|'], "");
+        .replace(['"', '<', '>', '|'], "")
+        .chars()
+        // 控制字符（换行、\t 等）和不可见 Unicode（零宽、bidi 等）会混进
+        // 视频标题里，Windows 上文件名含控制字符时 ffmpeg 打开输出文件直接
+        // 报 Invalid argument。
+        .filter(|c| !c.is_control() && !is_invisible_unicode(*c))
+        .collect();
     cleaned = SPACES
         .replace_all(&cleaned, " ")
         .trim_matches(&[' ', '.', '_', '-'][..])
@@ -191,6 +211,17 @@ mod tests {
             generate_filename(2, "找/妈妈?", "mp3", 3),
             "002_找妈妈？.mp3"
         );
+    }
+
+    #[test]
+    fn strips_control_and_invisible_characters() {
+        // 换行/制表符/零宽字符/软连字符都会让 Windows 文件名非法或不可见，
+        // ffmpeg 打开输出文件时报 Invalid argument。
+        assert_eq!(
+            generate_filename(1, "小猪佩奇\n第1集\t（\u{200B}泥坑\u{AD}）", "mp3", 3),
+            "001_小猪佩奇第1集（泥坑）.mp3"
+        );
+        assert_eq!(sanitize_filename_part("a\r\nb"), "ab");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::{
     db::Database,
-    media::{last_error, require_command},
+    media::{full_command_error, require_command},
     models::{AppSettings, Collection, ExtractRequest},
     sorter::{calculate_padding, compare_names, generate_filename, sanitize_filename_part},
 };
@@ -528,7 +528,7 @@ async fn run_command(
         if output.status.success() {
             Ok(())
         } else {
-            bail!("{}", last_error(&output.stderr))
+            bail!("{}", full_command_error(output.status.code(), &output.stderr))
         }
     })
     .await??;
