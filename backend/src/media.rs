@@ -158,7 +158,8 @@ pub fn command_error(code: Option<i32>, stderr: &[u8]) -> String {
 /// 打不开，要看 stderr 前面的行。完整日志让任务详情页能直接展示。
 pub fn full_command_error(code: Option<i32>, stderr: &[u8]) -> String {
     let summary = command_error(code, stderr);
-    let detail = String::from_utf8_lossy(stderr).trim();
+    let lossy = String::from_utf8_lossy(stderr);
+    let detail = lossy.trim();
     if detail.is_empty() {
         return summary;
     }
