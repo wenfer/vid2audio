@@ -39,7 +39,8 @@
   },
   "plugins": {
     "tauri-plugin-updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUxMjc1MkIyNkRBRDlCQUIKUldTcm02MXRzbEluVVVqWnVqUXRlcmU5dnNxakk5V0lZTGsrK1BHNldwZ1MwNGpvTGZ5UXViZ0sK",
+      "createUpdaterArtifacts": "v1Compatible",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNCRkE1Qjk5NkZDMjRFMDYKUldRR1RzSnZtVnY2T3pqVndSL1J3RmVSUkFsMndHQlpuZHNrbjVTZHZsUjc5YXVhT2ZlenVOSmIK",
       "endpoints": [
         "https://github.com/wenfer/vid2audio/releases/latest/download/latest.json"
       ]
