@@ -38,6 +38,27 @@ fn is_invisible_unicode(c: char) -> bool {
     )
 }
 
+/// 文件名白名单：ASCII、CJK（中日韩统一表意/假名/谚文）、CJK 全角标点与
+/// 全角形式（？％等）。其余字符（Latin-1 扩展、希伯来文/阿拉伯文、U+FFFD
+/// 替换符等）几乎都是 GBK 文件名错误转码的乱码产物，Windows 的 ANSI 代码页
+/// 无法表示它们，会被 ffmpeg 命令行转码成 `?` 导致打不开输出文件。
+fn is_safe_filename_char(c: char) -> bool {
+    c.is_ascii()
+        || matches!(
+            c,
+            '\u{00B7}' // 间隔号 ·
+                | '\u{2013}'..='\u{2026}' // 常用中文标点：– — ‘ ’ “ ” …
+                | '\u{3000}'..='\u{303F}' // CJK 符号和标点（全角空格、。、《》等）
+                | '\u{3040}'..='\u{30FF}' // 平假名、片假名
+                | '\u{3400}'..='\u{4DBF}' // CJK 扩展 A
+                | '\u{4E00}'..='\u{9FFF}' // CJK 统一表意文字
+                | '\u{AC00}'..='\u{D7AF}' // 谚文
+                | '\u{F900}'..='\u{FAFF}' // CJK 兼容表意
+                | '\u{FF00}'..='\u{FFEF}' // 全角形式（！？％等）
+                | '\u{20000}'..='\u{2FA1F}' // CJK 扩展 B 及以上
+        )
+}
+
 pub fn sanitize_filename_part(value: &str) -> String {
     let mut cleaned = value
         .trim()
@@ -48,12 +69,13 @@ pub fn sanitize_filename_part(value: &str) -> String {
         .replace('%', "％") // ffmpeg 把输出文件名里的 % 当序列号格式解析，非法 %X 会报 Invalid argument
         .replace(['"', '<', '>', '|'], "")
         .chars()
-        // 控制字符（换行、\t 等）、不可见 Unicode（零宽、bidi 等）和替换符
-        // U+FFFD 会混进标题里：U+FFFD 是 to_string_lossy 对非法编码的替换
-        // 产物，Windows 上 ffmpeg（ANSI main）把命令行转系统代码页（GBK）
-        // 时无法表示 U+FFFD，路径里就会变出 `?`，打开输出文件直接报
-        // Invalid argument。
-        .filter(|c| !c.is_control() && !is_invisible_unicode(*c) && *c != '\u{FFFD}')
+        // 白名单过滤：只保留 ASCII、CJK/全角字符、常见标点。文件名可能来自
+        // NAS/SMB/旧设备，是 GBK 字节被错误转码的产物（如 "蓝猫淘气" 的 GBK
+        // 字节按 UTF-8 解码成 "��è����"），混入 Latin-1（å è）、希伯来文
+        // 音符（ֵ）、替换符 U+FFFD 等 GBK 代码页无法表示的字符——Windows 上
+        // ffmpeg（ANSI main）把命令行转系统代码页时这些字符变 `?`，打开输出
+        // 文件直接报 Invalid argument。
+        .filter(|c| !c.is_control() && !is_invisible_unicode(*c) && is_safe_filename_char(*c))
         .collect::<String>();
     cleaned = SPACES
         .replace_all(&cleaned, " ")
@@ -226,13 +248,22 @@ mod tests {
         assert_eq!(sanitize_filename_part("a\r\nb"), "ab");
         // U+FFFD（lossy 转换产物）在 Windows 代码页（GBK）里无法表示，
         // ffmpeg 的命令行转码会把它变成 `?` 导致输出文件打不开。
+        assert_eq!(sanitize_filename_part("蓝猫\u{FFFD}淘气"), "蓝猫淘气");
+        // GBK 文件名被错误转码的乱码（Latin-1/希伯来文等）也一并过滤，
+        // 与用户实测的 "蓝猫淘气&??!! MAX 1440x1080" 场景一致。
         assert_eq!(
-            sanitize_filename_part("蓝猫\u{FFFD}淘气"),
-            "蓝猫淘气"
-        );
-        assert_eq!(
-            generate_filename(19, "蓝猫淘气&?\u{FFFD}!! MAX 1440x1080", "mp3", 3),
+            generate_filename(
+                19,
+                "蓝猫淘气&\u{FFFD}?\u{05B5}\u{00E5}!! MAX 1440x1080",
+                "mp3",
+                3
+            ),
             "019_蓝猫淘气&？!! MAX 1440x1080.mp3"
+        );
+        // 合法的全角标点与英文保留。
+        assert_eq!(
+            sanitize_filename_part("皮皮鲁（3D版）·鲁西西！"),
+            "皮皮鲁（3D版）·鲁西西！"
         );
     }
 
