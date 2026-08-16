@@ -156,10 +156,24 @@ jobs:
           fi
           asset="vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe"
           mv "${installer}" "${nsis_dir}/${asset}"
-          # updater 签名文件跟随安装包重命名，保持 basename 一致。
-          sig="$(find "${nsis_dir}" -maxdepth 1 -name '*-setup.exe.sig' | head -n1)"
-          if [[ -n "${sig}" ]]; then
-            mv "${sig}" "${nsis_dir}/${asset}.sig"
+          # tauri build 生成的 .sig 按原始文件名（Vid2Audio_..._x64-setup.exe）
+          # 签名，重命名后 minisign 的 file: 字段不匹配，丢弃，下面重新签名。
+          rm -f "${nsis_dir}/${asset}.sig"
+
+      # 重命名后重新签名：minisign 签名内嵌文件名（file: 字段），必须与
+      # 最终上传/下载的文件名一致，否则 updater 验证可能失败。
+      - name: Sign renamed installer
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          nsis_dir="src-tauri/target/release/bundle/nsis"
+          asset="vid2audio-${{ steps.version.outputs.version }}-windows-x64-setup.exe"
+          tauri signer sign "${nsis_dir}/${asset}"
+          if [[ ! -f "${nsis_dir}/${asset}.sig" ]]; then
+            echo "签名失败：未生成 ${asset}.sig" >&2
+            exit 1
           fi
 
       # 生成 updater 更新清单 latest.json（Tauri v2 格式），随 release 一起上传。
