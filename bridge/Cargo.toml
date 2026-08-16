@@ -1,6 +1,6 @@
 [package]
 name = "vid2audio-bridge"
-version = "0.2.7"
+version = "0.2.8"
 description = "WebView 自定义协议与 Axum router 之间的转发层"
 edition = "2024"
 

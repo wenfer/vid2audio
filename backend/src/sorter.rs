@@ -48,10 +48,12 @@ pub fn sanitize_filename_part(value: &str) -> String {
         .replace('%', "％") // ffmpeg 把输出文件名里的 % 当序列号格式解析，非法 %X 会报 Invalid argument
         .replace(['"', '<', '>', '|'], "")
         .chars()
-        // 控制字符（换行、\t 等）和不可见 Unicode（零宽、bidi 等）会混进
-        // 视频标题里，Windows 上文件名含控制字符时 ffmpeg 打开输出文件直接
-        // 报 Invalid argument。
-        .filter(|c| !c.is_control() && !is_invisible_unicode(*c))
+        // 控制字符（换行、\t 等）、不可见 Unicode（零宽、bidi 等）和替换符
+        // U+FFFD 会混进标题里：U+FFFD 是 to_string_lossy 对非法编码的替换
+        // 产物，Windows 上 ffmpeg（ANSI main）把命令行转系统代码页（GBK）
+        // 时无法表示 U+FFFD，路径里就会变出 `?`，打开输出文件直接报
+        // Invalid argument。
+        .filter(|c| !c.is_control() && !is_invisible_unicode(*c) && *c != '\u{FFFD}')
         .collect::<String>();
     cleaned = SPACES
         .replace_all(&cleaned, " ")
@@ -222,6 +224,16 @@ mod tests {
             "001_小猪佩奇第1集（泥坑）.mp3"
         );
         assert_eq!(sanitize_filename_part("a\r\nb"), "ab");
+        // U+FFFD（lossy 转换产物）在 Windows 代码页（GBK）里无法表示，
+        // ffmpeg 的命令行转码会把它变成 `?` 导致输出文件打不开。
+        assert_eq!(
+            sanitize_filename_part("蓝猫\u{FFFD}淘气"),
+            "蓝猫淘气"
+        );
+        assert_eq!(
+            generate_filename(19, "蓝猫淘气&?\u{FFFD}!! MAX 1440x1080", "mp3", 3),
+            "019_蓝猫淘气&？!! MAX 1440x1080.mp3"
+        );
     }
 
     #[test]
