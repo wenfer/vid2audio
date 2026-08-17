@@ -229,6 +229,10 @@ jobs:
     env:
       # 对 Rust 和源码编译的 ffmpeg 统一生效，产物最低支持 macOS 11。
       MACOSX_DEPLOYMENT_TARGET: "11.0"
+      # secrets 不允许直接用在 step 级 if 里，先提到 job 级 env（该层允许），
+      # 下面各 step 用 env.APPLE_CERTIFICATE / env.APPLE_ID 判断是否存在。
+      APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+      APPLE_ID: ${{ secrets.APPLE_ID }}
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Checkout
@@ -288,7 +292,7 @@ jobs:
       # 有 Apple 证书就导入并取签名身份；没有就退回 ad-hoc（signingIdentity "-"）。
       # ad-hoc 的产物首次打开需右键 → 打开，这是没有 Apple Developer 账号时的下限。
       - name: Import Apple certificate
-        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        if: ${{ env.APPLE_CERTIFICATE != '' }}
         shell: bash
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -314,7 +318,7 @@ jobs:
           echo "APPLE_SIGNING_IDENTITY=${cert_id}" >> "${GITHUB_ENV}"
 
       - name: Configure ad-hoc signing
-        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        if: ${{ env.APPLE_CERTIFICATE == '' }}
         shell: bash
         run: |
           echo "未配置 APPLE_CERTIFICATE，使用 ad-hoc 签名（首次打开需 Finder 右键→打开）" >&2
@@ -324,12 +328,14 @@ jobs:
       # 走 App Store Connect API（APPLE_API_ISSUER/APPLE_API_KEY）也是支持的，按
       # Tauri 文档把对应环境变量加进来即可。
       - name: Export notarization credentials
-        if: ${{ secrets.APPLE_ID != '' }}
+        if: ${{ env.APPLE_ID != '' }}
         shell: bash
         run: |
-          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "${GITHUB_ENV}"
-          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "${GITHUB_ENV}"
-          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "${GITHUB_ENV}"
+          {
+            echo "APPLE_ID=${{ secrets.APPLE_ID }}"
+            echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}"
+            echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}"
+          } >> "${GITHUB_ENV}"
 
       # tauri build 用 --bundles 覆盖配置里的 ["nsis"]，只出 macOS 的 app + dmg；
       # createUpdaterArtifacts: "v1Compatible" 会同时产出 .app.tar.gz 及其 .sig。
