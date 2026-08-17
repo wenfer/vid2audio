@@ -38,6 +38,11 @@ pub fn home_dir() -> Option<PathBuf> {
 ///
 /// 容器里保持 `/app/data`；桌面版装到 Program Files 后当前目录不可写，
 /// 必须落到用户目录，否则进程起不来。
+///
+/// 非 Windows 桌面版的相对路径 `data` 是坑：macOS 经 Finder/LaunchServices
+/// 启动时工作目录是 `/`（根目录只读），SQLite 建库会直接 EROFS 崩溃；
+/// 所以 macOS 落到 `~/Library/Application Support/vid2audio`，Linux 落到
+/// XDG 数据目录。
 pub fn default_data_dir() -> PathBuf {
     if cfg!(windows) {
         std::env::var_os("LOCALAPPDATA")
@@ -47,8 +52,20 @@ pub fn default_data_dir() -> PathBuf {
             .join("vid2audio")
     } else if Path::new("/app").is_dir() {
         PathBuf::from("/app/data")
+    } else if cfg!(target_os = "macos") {
+        home_dir()
+            .map(|home| {
+                home.join("Library")
+                    .join("Application Support")
+                    .join("vid2audio")
+            })
+            .unwrap_or_else(|| PathBuf::from("data"))
     } else {
-        PathBuf::from("data")
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .or_else(|| home_dir().map(|home| home.join(".local").join("share")))
+            .unwrap_or_else(|| PathBuf::from("data"))
+            .join("vid2audio")
     }
 }
 

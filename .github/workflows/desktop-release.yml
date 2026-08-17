@@ -6,7 +6,7 @@ name: Build desktop installers
 # 会被解析成非法的活动工作流，每次 push 都报错）。
 #
 # 触发方式：
-#   1. 打 v*.*.* tag（如 v0.2.10）→ 自动构建并发布
+#   1. 打 v*.*.* tag（如 v0.2.11）→ 自动构建并发布
 #   2. Actions 页面手动 dispatch → 填版本号后构建并发布
 #
 # 发版约束：
@@ -39,7 +39,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "要发布的版本号（X.Y.Z），必须与 src-tauri/tauri.conf.json 一致，例如 0.2.10"
+        description: "要发布的版本号（X.Y.Z），必须与 src-tauri/tauri.conf.json 一致，例如 0.2.11"
         required: true
       prerelease:
         description: "标记为预发布版本"
@@ -465,7 +465,7 @@ jobs:
           name: "Vid2Audio v${{ needs.prepare.outputs.version }}"
           files: |
             artifacts/windows/*
-            artifacts/macos/*
+            artifacts/macos/**/*
             artifacts/latest.json
           fail_on_unmatched_files: true
           prerelease: ${{ inputs.prerelease || false }}
