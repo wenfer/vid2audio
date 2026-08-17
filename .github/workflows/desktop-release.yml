@@ -61,7 +61,7 @@ jobs:
       sha_short: ${{ steps.meta.outputs.sha_short }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # 所有 bash 语法步骤都必须显式 shell: bash——Windows runner 默认是 pwsh，
       # [[ ]] / $GITHUB_OUTPUT 这些写法在 pwsh 下会直接报错。
@@ -112,7 +112,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       # edition 2024（platform.rs 的 `unsafe extern`）要 1.85+，runner 镜像自带的
       # Rust 可能落后，所以显式装 stable 而不是用镜像里那份。
@@ -126,7 +126,7 @@ jobs:
           workspaces: "src-tauri -> target"
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -201,7 +201,7 @@ jobs:
           fi
 
       - name: Upload Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vid2audio-windows
           path: |
@@ -236,7 +236,7 @@ jobs:
       HOMEBREW_NO_AUTO_UPDATE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -247,7 +247,7 @@ jobs:
           workspaces: "src-tauri -> target"
 
       - name: Install Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: "20"
           cache: npm
@@ -270,7 +270,7 @@ jobs:
       # 直接命中缓存，build_ffmpeg_macos.py 检测到 ffmpeg/ffprobe 已存在会立刻跳过。
       # 换 FFmpeg 版本 / 改构建参数 → hashFiles 变化 → 自动重编。
       - name: Cache bundled LGPL FFmpeg
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: src-tauri/binaries
           key: macos-ffmpeg-${{ matrix.arch }}-${{ hashFiles('src-tauri/scripts/build_ffmpeg_macos.py') }}
@@ -398,7 +398,7 @@ jobs:
           fi
 
       - name: Upload macOS artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: vid2audio-macos-${{ matrix.arch }}
           path: |
@@ -422,16 +422,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Download Windows artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           name: vid2audio-windows
           path: artifacts/windows
 
       - name: Download macOS artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: vid2audio-macos-*
           merge-multiple: true
@@ -459,7 +459,7 @@ jobs:
           echo "latest.json: $(cat artifacts/latest.json)"
 
       - name: Publish release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: "v${{ needs.prepare.outputs.version }}"
           name: "Vid2Audio v${{ needs.prepare.outputs.version }}"
