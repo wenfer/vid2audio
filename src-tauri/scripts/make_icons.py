@@ -140,6 +140,27 @@ def ico_bytes(pngs):
     return header + entries + blobs
 
 
+# 每种尺寸在 icns 里的 OSType。macOS 的 icns 现在内部直接存 PNG，
+# 不需要解析任何位图格式——只要 OSType 和像素尺寸对得上。
+ICNS_OSTYPES = {
+    16: b"ic04",
+    32: b"ic05",
+    48: b"ic06",
+    128: b"ic07",
+    256: b"ic08",
+    512: b"ic09",
+    1024: b"ic10",
+}
+
+
+def icns_bytes(pngs):
+    """ICNS = 8 字节头 + 若干条目（每个 8 字节条目头 + PNG 数据）。"""
+    entries = bytearray()
+    for size, data in pngs:
+        entries += ICNS_OSTYPES[size] + struct.pack(">I", 8 + len(data)) + data
+    return b"icns" + struct.pack(">I", 8 + len(entries)) + bytes(entries)
+
+
 def main():
     OUT.mkdir(parents=True, exist_ok=True)
     cache = {}
@@ -162,6 +183,10 @@ def main():
     ico = ico_bytes([(s, png_for(s)) for s in (16, 32, 48, 64, 128, 256)])
     (OUT / "icon.ico").write_bytes(ico)
     print(f"  icon.ico ({len(ico)} bytes)")
+
+    icns = icns_bytes([(s, png_for(s)) for s in (16, 32, 48, 128, 256, 512, 1024)])
+    (OUT / "icon.icns").write_bytes(icns)
+    print(f"  icon.icns ({len(icns)} bytes)")
 
 
 if __name__ == "__main__":

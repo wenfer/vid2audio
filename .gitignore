@@ -10,6 +10,14 @@ data/
 *.sqlite3
 
 .workbuddy/
+.kiro/
+
+# 旧版 Python 后端（Rust 重写前的骨架，已废弃）
+backend/app/
+
+# Python 虚拟环境与缓存（旧工具链遗留）
+.venv/
+.pytest_cache/
 
 # Frontend
 frontend/node_modules/
@@ -32,3 +40,6 @@ src-tauri/gen/schemas/
 # 随包分发的 ffmpeg（约 115MB，由 src-tauri/scripts/fetch_ffmpeg.py 下载）
 src-tauri/binaries/*
 !src-tauri/binaries/README.md
+
+# macOS FFmpeg 源码编译中间产物（scripts/build_ffmpeg_macos.py 用，仅 CI）
+src-tauri/ffbuild/

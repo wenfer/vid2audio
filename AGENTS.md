@@ -22,8 +22,10 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 - `src-tauri/`: `vid2audio-desktop`, the Tauri v2 desktop shell.
   - `src/lib.rs`: runtime setup, custom URI scheme registration, window creation.
   - `capabilities/default.json`: the entire IPC allowlist — dialogs and reveal-in-folder, nothing else.
-  - `scripts/fetch_ffmpeg.py`: downloads the bundled LGPL FFmpeg into `binaries/`.
-  - `scripts/make_icons.py`: regenerates `icons/` using only the standard library.
+  - `scripts/fetch_ffmpeg.py`: downloads the bundled LGPL FFmpeg into `binaries/` (Windows, BtbN shared builds).
+  - `scripts/build_ffmpeg_macos.py`: compiles LGPL FFmpeg for macOS from source into `binaries/` (BtbN stopped shipping macOS builds; evermeet/osxexperts are GPL).
+  - `scripts/make_updater_manifest.py`: merges every platform's `.sig` into the `latest.json` updater manifest.
+  - `scripts/make_icons.py`: regenerates `icons/` (PNG/ICO/ICNS) using only the standard library.
 - `frontend/`: Vue 3 + Vite + TypeScript source code.
   - `src/api/`: API client layer.
   - `src/components/`: reusable Vue components.
@@ -36,7 +38,7 @@ Vid2Audio is a NAS-friendly Docker application for turning video collections int
 - `docker/`: Dockerfile and compose files.
   - `Dockerfile`: multi-stage Rust/Vue build with Debian FFmpeg bundled.
   - `docker-compose.yml`: default self-contained deployment.
-- `.github/workflows/desktop-windows.yml`: the only release pipeline — Windows NSIS installer (`vid2audio-<version>-windows-x64-setup.exe`), on `v*.*.*` tags and manual dispatch.
+- `.github/workflows/desktop-release.yml`: the only release pipeline — Windows NSIS installer (`vid2audio-<version>-windows-x64-setup.exe`) and macOS DMGs for both architectures (`vid2audio-<version>-macos-<arch>.dmg`), on `v*.*.*` tags and manual dispatch.
 - Docker images are not published by CI anymore: `.github/workflows/docker-ghcr.yml` was deleted. Do not re-add it with `on: []` — GitHub treats an empty trigger list as an invalid (but "active") workflow and creates a failing run on every push; delete the file instead.
 - `docs/PRD-vid2audio.md`: product requirements and design reference.
 
@@ -80,23 +82,27 @@ Run with Docker:
 docker compose -f docker/docker-compose.yml up --build
 ```
 
-Desktop build (Windows first; macOS and Linux planned):
+Desktop build (Windows and macOS; Linux planned):
 
 ```bash
 cd src-tauri
-python3 scripts/fetch_ffmpeg.py     # one-time: bundled LGPL FFmpeg into binaries/
-npm --prefix ../frontend run build  # also run automatically by beforeBuildCommand
-cargo tauri build                   # NSIS installer under target/release/bundle/
+python3 scripts/fetch_ffmpeg.py           # Windows: bundled LGPL FFmpeg into binaries/
+python3 scripts/build_ffmpeg_macos.py     # macOS: compile LGPL FFmpeg from source
+npm --prefix ../frontend run build        # also run automatically by beforeBuildCommand
+cargo tauri build                         # NSIS under target/release/bundle/nsis/
+cargo tauri build --bundles app,dmg       # macOS: .app + .dmg under target/release/bundle/
 ```
 
 Requires the Tauri CLI (`cargo install tauri-cli --version '^2'`) plus the MSVC
-toolchain and WebView2 runtime on Windows. Tauri cannot bundle a Windows
-installer from Linux except through the NSIS cross-compilation path its own docs
-call a last resort, so `.github/workflows/desktop-windows.yml` builds the
-installer on a `windows-latest` runner instead — push a `v*.*.*` tag (must equal
-`v` + the `"version"` in `src-tauri/tauri.conf.json`) or dispatch it manually,
-then download the `vid2audio-windows-nsis` artifact. Released assets are renamed
-to `vid2audio-<version>-windows-x64-setup.exe`.
+toolchain and WebView2 runtime on Windows, or Xcode command line tools on macOS.
+Tauri cannot bundle a Windows installer from Linux except through the NSIS
+cross-compilation path its own docs call a last resort, so
+`.github/workflows/desktop-release.yml` builds each platform on its own native
+runner — push a `v*.*.*` tag (must equal `v` + the `"version"` in
+`src-tauri/tauri.conf.json`) or dispatch it manually, then download the
+`vid2audio-windows-nsis` artifact (renamed to
+`vid2audio-<version>-windows-x64-setup.exe`) or the macOS `.dmg` files
+(`vid2audio-<version>-macos-<arch>.dmg`).
 
 `beforeBuildCommand` pins its `cwd` explicitly and must keep doing so. The CLI
 runs the hook in `resolve_frontend_dir()`, which looks for a `package.json` and
@@ -195,13 +201,14 @@ Base URL: `/api/v1`
 
 ## Releases (GitHub Actions)
 
-The only CI pipeline is `.github/workflows/desktop-windows.yml` — it builds the
-Windows NSIS installer on a `windows-latest` runner and publishes it as a GitHub
-Release. Docker images are no longer published by CI (the old
-`.github/workflows/docker-ghcr.yml` was deleted; do not bring it back with
-`on: []` — an empty trigger list is parsed as an invalid active workflow that
-fails on every push). Local `docker compose -f docker/docker-compose.yml up --build`
-still works for development.
+The only CI pipeline is `.github/workflows/desktop-release.yml` — it builds the
+Windows NSIS installer on a `windows-latest` runner and macOS DMGs for both
+architectures (matrix: `macos-15` for aarch64, `macos-15-intel` for x86_64),
+then publishes them together as a GitHub Release. Docker images are no longer
+published by CI (the old `.github/workflows/docker-ghcr.yml` was deleted; do not
+bring it back with `on: []` — an empty trigger list is parsed as an invalid
+active workflow that fails on every push). Local
+`docker compose -f docker/docker-compose.yml up --build` still works for development.
 
 Release rules:
 
@@ -212,23 +219,38 @@ Release rules:
   too — the workflow fails otherwise, so a mislabeled package cannot be published.
 - Every bash-style step sets `shell: bash` explicitly; the Windows runner's default
   shell is pwsh and would choke on `[[ ]]` / `$GITHUB_OUTPUT` scripts.
-- `fetch_ffmpeg.py` resolves `src-tauri/binaries/` from its own script path (no
-  cwd dependency), matching the `binaries/` resource that `tauri.conf.json` bundles.
+- `fetch_ffmpeg.py` (Windows) resolves `src-tauri/binaries/` from its own script
+  path (no cwd dependency), matching the `binaries/` resource that
+  `tauri.conf.json` bundles. macOS uses `build_ffmpeg_macos.py` instead — BtbN
+  stopped shipping macOS builds and evermeet/osxexperts are GPL, so CI compiles a
+  static LGPL ffmpeg/ffprobe (plus lame/vorbis/opus) from source, with license
+  texts copied into `binaries/licenses/`.
 - Installer naming: `vid2audio-<version>-windows-x64-setup.exe`, renamed from
-  Tauri's default `Vid2Audio_<version>_x64-setup.exe`; the release asset and the
-  `vid2audio-windows-nsis` artifact share the same name.
+  Tauri's default `Vid2Audio_<version>_x64-setup.exe`; macOS uses
+  `vid2audio-<version>-macos-<arch>.dmg` and the updater archive
+  `vid2audio-<version>-macos-<arch>.app.tar.gz`. Release assets and artifacts
+  share the same names.
+- macOS signing: without an `APPLE_CERTIFICATE` secret the build falls back to
+  ad-hoc signing (`APPLE_SIGNING_IDENTITY=-`), which still requires users to
+  right-click → Open on first launch. With `APPLE_CERTIFICATE`/`APPLE_CERTIFICATE_PASSWORD`/
+  `KEYCHAIN_PASSWORD` the certificate is imported into a throwaway keychain and
+  used for a real Developer ID signature; adding `APPLE_ID`/`APPLE_PASSWORD`/
+  `APPLE_TEAM_ID` triggers notarization.
 - Publishing a version whose tag already exists fails on purpose — no duplicate releases.
 - **Auto-update (tauri-plugin-updater)**: configured via `bundle.createUpdaterArtifacts:
-  "v1Compatible"` (v2 schema; generates `.sig` for the installer) plus
-  `plugins.updater` (pubkey + GitHub latest.json endpoint — note the key is
-  `updater`, not `tauri-plugin-updater`). The pubkey is committed there and the
-  **private key lives only in the repo Secrets as `TAURI_SIGNING_PRIVATE_KEY`**
-  (generate with `npx @tauri-apps/cli signer generate`; never commit it; it is
-  password-protected, password in `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). The
-  workflow signs the installer **after** renaming it (minisign embeds the file
-  name in the signature) via `tauri signer sign`, uploads the `.sig` plus
-  `latest.json` (built by `src-tauri/scripts/make_updater_manifest.py`); the app
-  checks `https://github.com/wenfer/vid2audio/releases/latest/download/latest.json`
+  "v1Compatible"` (v2 schema; generates `.sig` for the installer and the macOS
+  `.app.tar.gz`) plus `plugins.updater` (pubkey + GitHub latest.json endpoint —
+  note the key is `updater`, not `tauri-plugin-updater`). The pubkey is committed
+  there and the **private key lives only in the repo Secrets as
+  `TAURI_SIGNING_PRIVATE_KEY`** (generate with `npx @tauri-apps/cli signer generate`;
+  never commit it; it is password-protected, password in
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`). The workflow signs each artifact
+  **after** renaming it (minisign embeds the file name in the signature) via
+  `tauri signer sign`. Tauri validates the whole `latest.json`, so a platform
+  missing from it breaks that platform's auto-update — the build jobs only upload
+  artifacts and the `publish` job merges every platform's `.sig` into one
+  `latest.json` via `src-tauri/scripts/make_updater_manifest.py`. The app checks
+  `https://github.com/wenfer/vid2audio/releases/latest/download/latest.json`
   and the settings page offers 检查更新 / 立即更新 (download-and-install, then
   restart the app).
 

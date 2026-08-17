@@ -1,0 +1,489 @@
+name: Build desktop installers
+
+# ============================================================================
+# 唯一的发布流水线：Windows NSIS 安装包 + macOS 两个架构的 DMG，统一发布 GitHub Release。
+# Docker 镜像构建已停用（docker-ghcr.yml 已删除，不要用 on: [] 加回来——空触发列表
+# 会被解析成非法的活动工作流，每次 push 都报错）。
+#
+# 触发方式：
+#   1. 打 v*.*.* tag（如 v0.2.10）→ 自动构建并发布
+#   2. Actions 页面手动 dispatch → 填版本号后构建并发布
+#
+# 发版约束：
+#   - 版本号单一来源是 src-tauri/tauri.conf.json 的 "version"
+#   - tag 必须严格等于 v{tauri.conf.json 版本}，防止标错版本
+#   - dispatch 填的版本也必须与 tauri.conf.json 一致
+#   - 产物命名：
+#       vid2audio-<版本>-windows-x64-setup.exe              （Windows x64）
+#       vid2audio-<版本>-macos-x86_64.dmg / .app.tar.gz     （macOS Intel）
+#       vid2audio-<版本>-macos-aarch64.dmg / .app.tar.gz    （macOS Apple Silicon）
+#
+# 各平台 FFmpeg 来源：
+#   - Windows 用 BtbN 预编译 LGPL shared 构建（scripts/fetch_ffmpeg.py）
+#   - macOS 的 BtbN 已停发、evermeet 等又是 GPL；为守住 LGPL 立场，
+#     在 CI 里从源码编译（scripts/build_ffmpeg_macos.py，静态二进制）
+#
+# macOS 签名/公证：
+#   - 未配置 APPLE_CERTIFICATE secret 时用 ad-hoc 签名（signingIdentity "-"），
+#     用户首次打开需 Finder 右键 → 打开
+#   - 配置了 APPLE_CERTIFICATE 后自动导入证书并用正式身份签名；
+#     再配置 APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID 即自动公证（notarization）
+#
+# updater 清单：Tauri 校验整个 latest.json，任何平台缺 key 该平台就无法更新，
+# 所以各平台的 .sig 统一在 publish job 里合并生成，禁止各 job 单独覆盖 latest.json。
+# ============================================================================
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "要发布的版本号（X.Y.Z），必须与 src-tauri/tauri.conf.json 一致，例如 0.2.10"
+        required: true
+      prerelease:
+        description: "标记为预发布版本"
+        type: boolean
+        default: false
+
+concurrency:
+  group: desktop-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ==================== 版本解析（唯一，build 各 job 共用） ====================
+  prepare:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      build_time: ${{ steps.meta.outputs.build_time }}
+      sha_short: ${{ steps.meta.outputs.sha_short }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 所有 bash 语法步骤都必须显式 shell: bash——Windows runner 默认是 pwsh，
+      # [[ ]] / $GITHUB_OUTPUT 这些写法在 pwsh 下会直接报错。
+      - name: Resolve and validate version
+        id: version
+        shell: bash
+        run: |
+          conf_version="$(sed -n 's/^  "version": "\([^"]*\)".*/\1/p' src-tauri/tauri.conf.json | head -n1)"
+          if [[ -z "${conf_version}" || ! "${conf_version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "无法从 src-tauri/tauri.conf.json 读取合法版本号" >&2
+            exit 1
+          fi
+          if [[ "${{ github.ref_type }}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            if [[ "v${conf_version}" != "${GITHUB_REF_NAME}" ]]; then
+              echo "Git tag ${GITHUB_REF_NAME} 与 tauri.conf.json 版本 v${conf_version} 不一致" >&2
+              exit 1
+            fi
+          else
+            version="${{ inputs.version }}"
+            if [[ -z "${version}" ]]; then
+              echo "手动 dispatch 必须填写 version" >&2
+              exit 1
+            fi
+            if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "非法版本号 ${version}（需要 X.Y.Z 格式）" >&2
+              exit 1
+            fi
+            if [[ "${version}" != "${conf_version}" ]]; then
+              echo "输入版本 ${version} 与 tauri.conf.json 版本 ${conf_version} 不一致" >&2
+              exit 1
+            fi
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Collect build metadata
+        id: meta
+        shell: bash
+        run: |
+          echo "build_time=$(date -u +'%Y-%m-%d %H:%M:%S UTC')" >> "${GITHUB_OUTPUT}"
+          echo "sha_short=${GITHUB_SHA::8}" >> "${GITHUB_OUTPUT}"
+
+  # ==================== Windows ====================
+  build-windows:
+    name: Build Windows installer
+    needs: prepare
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # edition 2024（platform.rs 的 `unsafe extern`）要 1.85+，runner 镜像自带的
+      # Rust 可能落后，所以显式装 stable 而不是用镜像里那份。
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # 依赖产物全部落在 src-tauri/target（backend/bridge 是 path 依赖，一并编译进来）。
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      # 用 npm 的 CLI 而不是 `cargo install tauri-cli`：前者下预编译二进制，
+      # 后者要现编译 tauri-cli，在 Windows runner 上白等五六分钟。
+      - name: Install Tauri CLI
+        run: npm install --global "@tauri-apps/cli@^2"
+
+      # 随包分发的 LGPL FFmpeg。binaries/ 不进仓库（约 115 MB），只在缺失时下载。
+      - name: Download bundled FFmpeg
+        working-directory: src-tauri
+        run: python scripts/fetch_ffmpeg.py
+
+      # updater 已启用（bundle.updater.active），tauri build 必须用私钥对安装包
+      # 签名，否则构建失败。私钥不进仓库，配在仓库 Secrets 的
+      # TAURI_SIGNING_PRIVATE_KEY（生成：npx @tauri-apps/cli signer generate）。
+      - name: Check updater signing key
+        shell: bash
+        run: |
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]]; then
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY secret，无法签名更新包。" >&2
+            echo "生成密钥：npx @tauri-apps/cli signer generate -w ~/.tauri/vid2audio.key" >&2
+            echo "然后把该文件内容加入仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY（公钥已写入 tauri.conf.json）" >&2
+            exit 1
+          fi
+
+      - name: Build installer
+        working-directory: src-tauri
+        run: tauri build
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      # 安装包统一命名：vid2audio-<版本>-windows-x64-setup.exe
+      # （Tauri 默认产物是 Vid2Audio_<版本>_x64-setup.exe，这里重命名）。
+      - name: Rename installer
+        id: rename
+        shell: bash
+        run: |
+          nsis_dir="src-tauri/target/release/bundle/nsis"
+          installer="$(find "${nsis_dir}" -maxdepth 1 -name '*-setup.exe' | head -n1)"
+          if [[ -z "${installer}" ]]; then
+            echo "未找到 NSIS 安装包产物（${nsis_dir}）" >&2
+            exit 1
+          fi
+          asset="vid2audio-${{ needs.prepare.outputs.version }}-windows-x64-setup.exe"
+          mv "${installer}" "${nsis_dir}/${asset}"
+          # tauri build 生成的 .sig 按原始文件名（Vid2Audio_..._x64-setup.exe）
+          # 签名，重命名后 minisign 的 file: 字段不匹配，丢弃，下面重新签名。
+          rm -f "${nsis_dir}/${asset}.sig"
+
+      # 重命名后重新签名：minisign 签名内嵌文件名（file: 字段），必须与
+      # 最终上传/下载的文件名一致，否则 updater 验证可能失败。
+      - name: Sign renamed installer
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          nsis_dir="src-tauri/target/release/bundle/nsis"
+          asset="vid2audio-${{ needs.prepare.outputs.version }}-windows-x64-setup.exe"
+          tauri signer sign "${nsis_dir}/${asset}"
+          if [[ ! -f "${nsis_dir}/${asset}.sig" ]]; then
+            echo "签名失败：未生成 ${asset}.sig" >&2
+            exit 1
+          fi
+
+      - name: Upload Windows artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vid2audio-windows
+          path: |
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe
+            src-tauri/target/release/bundle/nsis/vid2audio-*-windows-x64-setup.exe.sig
+          if-no-files-found: error
+          retention-days: 14
+
+  # ==================== macOS ====================
+  # 按架构分开打：macos-15 是 arm64，macos-15-intel 是 x86_64，各自原生编译，
+  # 不需要交叉。每架构一份 DMG（手动安装）加一份 .app.tar.gz（updater 用）。
+  build-macos:
+    name: Build macOS (${{ matrix.arch }})
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            runner: macos-15
+          - arch: x86_64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    env:
+      # 对 Rust 和源码编译的 ffmpeg 统一生效，产物最低支持 macOS 11。
+      MACOSX_DEPLOYMENT_TARGET: "11.0"
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+
+      - name: Install Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Install Tauri CLI
+        run: npm install --global "@tauri-apps/cli@^2"
+
+      # ffmpeg 的 configure 用 pkg-config 找 lame/vorbis/opus，nasm 给 x86_64
+      # 的汇编加速（arm64 用 clang 内建汇编，装了也无害）。
+      - name: Install pkg-config and nasm
+        run: brew install pkg-config nasm
+
+      # BtbN 已停发 macOS 构建，evermeet 等是 GPL；这里在 CI 从源码编 LGPL 静态版。
+      # 编译一次要十几分钟，产物按脚本内容缓存：脚本（含里面固定的版本号）没变就
+      # 直接命中缓存，build_ffmpeg_macos.py 检测到 ffmpeg/ffprobe 已存在会立刻跳过。
+      # 换 FFmpeg 版本 / 改构建参数 → hashFiles 变化 → 自动重编。
+      - name: Cache bundled LGPL FFmpeg
+        uses: actions/cache@v4
+        with:
+          path: src-tauri/binaries
+          key: macos-ffmpeg-${{ matrix.arch }}-${{ hashFiles('src-tauri/scripts/build_ffmpeg_macos.py') }}
+
+      - name: Build bundled LGPL FFmpeg
+        working-directory: src-tauri
+        run: python3 scripts/build_ffmpeg_macos.py --arch ${{ matrix.arch }}
+
+      - name: Check updater signing key
+        shell: bash
+        run: |
+          if [[ -z "${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}" ]]; then
+            echo "未配置 TAURI_SIGNING_PRIVATE_KEY secret，无法签名更新包。" >&2
+            echo "生成密钥：npx @tauri-apps/cli signer generate -w ~/.tauri/vid2audio.key" >&2
+            echo "然后把该文件内容加入仓库 Secrets：TAURI_SIGNING_PRIVATE_KEY（公钥已写入 tauri.conf.json）" >&2
+            exit 1
+          fi
+
+      # 有 Apple 证书就导入并取签名身份；没有就退回 ad-hoc（signingIdentity "-"）。
+      # ad-hoc 的产物首次打开需右键 → 打开，这是没有 Apple Developer 账号时的下限。
+      - name: Import Apple certificate
+        if: ${{ secrets.APPLE_CERTIFICATE != '' }}
+        shell: bash
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          if [[ -z "${KEYCHAIN_PASSWORD}" ]]; then
+            echo "导入 Apple 证书需要 KEYCHAIN_PASSWORD secret" >&2
+            exit 1
+          fi
+          echo "${APPLE_CERTIFICATE}" | base64 --decode > certificate.p12
+          security create-keychain -p "${KEYCHAIN_PASSWORD}" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "${KEYCHAIN_PASSWORD}" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "${APPLE_CERTIFICATE_PASSWORD}" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "${KEYCHAIN_PASSWORD}" build.keychain
+          cert_id="$(security find-identity -v -p codesigning build.keychain | grep -oE '"[^"]+"' | head -n1 | tr -d '"')"
+          if [[ -z "${cert_id}" ]]; then
+            echo "keychain 里没有可用的签名身份" >&2
+            exit 1
+          fi
+          echo "APPLE_SIGNING_IDENTITY=${cert_id}" >> "${GITHUB_ENV}"
+
+      - name: Configure ad-hoc signing
+        if: ${{ secrets.APPLE_CERTIFICATE == '' }}
+        shell: bash
+        run: |
+          echo "未配置 APPLE_CERTIFICATE，使用 ad-hoc 签名（首次打开需 Finder 右键→打开）" >&2
+          echo "APPLE_SIGNING_IDENTITY=-" >> "${GITHUB_ENV}"
+
+      # 公证凭据：配齐 APPLE_ID/APPLE_PASSWORD/APPLE_TEAM_ID 后 tauri build 自动公证。
+      # 走 App Store Connect API（APPLE_API_ISSUER/APPLE_API_KEY）也是支持的，按
+      # Tauri 文档把对应环境变量加进来即可。
+      - name: Export notarization credentials
+        if: ${{ secrets.APPLE_ID != '' }}
+        shell: bash
+        run: |
+          echo "APPLE_ID=${{ secrets.APPLE_ID }}" >> "${GITHUB_ENV}"
+          echo "APPLE_PASSWORD=${{ secrets.APPLE_PASSWORD }}" >> "${GITHUB_ENV}"
+          echo "APPLE_TEAM_ID=${{ secrets.APPLE_TEAM_ID }}" >> "${GITHUB_ENV}"
+
+      # tauri build 用 --bundles 覆盖配置里的 ["nsis"]，只出 macOS 的 app + dmg；
+      # createUpdaterArtifacts: "v1Compatible" 会同时产出 .app.tar.gz 及其 .sig。
+      - name: Build app and DMG
+        working-directory: src-tauri
+        run: tauri build --bundles app,dmg
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Rename macOS artifacts
+        id: rename
+        shell: bash
+        run: |
+          bundle_dir="src-tauri/target/release/bundle"
+          version="${{ needs.prepare.outputs.version }}"
+          arch="${{ matrix.arch }}"
+          dmg="$(find "${bundle_dir}/dmg" -maxdepth 1 -name '*.dmg' | head -n1)"
+          if [[ -z "${dmg}" ]]; then
+            echo "未找到 DMG 产物（${bundle_dir}/dmg）" >&2
+            exit 1
+          fi
+          mv "${dmg}" "${bundle_dir}/dmg/vid2audio-${version}-macos-${arch}.dmg"
+          updater="$(find "${bundle_dir}/macos" -maxdepth 1 -name '*.app.tar.gz' | head -n1)"
+          if [[ -z "${updater}" ]]; then
+            echo "未找到 updater 归档（${bundle_dir}/macos）" >&2
+            exit 1
+          fi
+          asset="vid2audio-${version}-macos-${arch}.app.tar.gz"
+          mv "${updater}" "${bundle_dir}/macos/${asset}"
+          rm -f "${bundle_dir}/macos/${asset}.sig"
+          # 校验二进制架构，防止矩阵配置漂移打出错误架构的包。
+          # 注意 file 输出里 aarch64 显示为 arm64。
+          filearch="${arch}"
+          [[ "${arch}" == "aarch64" ]] && filearch="arm64"
+          if ! file "src-tauri/target/release/vid2audio-desktop" | grep -qi "${filearch}"; then
+            echo "主程序架构不符（期望 ${arch}）" >&2
+            file "src-tauri/target/release/vid2audio-desktop" >&2
+            exit 1
+          fi
+          if ! file "src-tauri/binaries/ffmpeg" | grep -qi "${filearch}"; then
+            echo "随包 ffmpeg 架构不符（期望 ${arch}）" >&2
+            file "src-tauri/binaries/ffmpeg" >&2
+            exit 1
+          fi
+
+      # 重命名 .app.tar.gz 后重新签名（minisign 签名内嵌文件名），与 Windows 一致。
+      - name: Sign renamed updater archive
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          bundle_dir="src-tauri/target/release/bundle"
+          asset="vid2audio-${{ needs.prepare.outputs.version }}-macos-${{ matrix.arch }}.app.tar.gz"
+          tauri signer sign "${bundle_dir}/macos/${asset}"
+          if [[ ! -f "${bundle_dir}/macos/${asset}.sig" ]]; then
+            echo "签名失败：未生成 ${asset}.sig" >&2
+            exit 1
+          fi
+
+      - name: Upload macOS artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: vid2audio-macos-${{ matrix.arch }}
+          path: |
+            src-tauri/target/release/bundle/dmg/vid2audio-*-macos-*.dmg
+            src-tauri/target/release/bundle/macos/vid2audio-*-macos-*.app.tar.gz
+            src-tauri/target/release/bundle/macos/vid2audio-*-macos-*.app.tar.gz.sig
+          if-no-files-found: error
+          retention-days: 14
+
+  # ==================== 发布 GitHub Release ====================
+  # 两个 build job 只上传 artifact，这里统一合并签名、生成 latest.json 并发布。
+  # 默认步骤语义：任一步失败都不会走到发布（没有 always()）。
+  # dispatch 发布一个已存在的版本会失败，这是有意的——防止重复发布。
+  publish:
+    name: Publish release
+    needs: [prepare, build-windows, build-macos]
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write          # 发布 release 需要写权限
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download Windows artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: vid2audio-windows
+          path: artifacts/windows
+
+      - name: Download macOS artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: vid2audio-macos-*
+          merge-multiple: true
+          path: artifacts/macos
+
+      # 合并生成 latest.json：Tauri 会校验整个清单，各平台缺一不可。
+      - name: Generate updater manifest
+        shell: bash
+        run: |
+          version="${{ needs.prepare.outputs.version }}"
+          win_sig="$(find artifacts/windows -name '*.exe.sig' | head -n1)"
+          x64_sig="$(find artifacts/macos -name '*-x86_64.app.tar.gz.sig' | head -n1)"
+          arm_sig="$(find artifacts/macos -name '*-aarch64.app.tar.gz.sig' | head -n1)"
+          for f in "${win_sig}" "${x64_sig}" "${arm_sig}"; do
+            if [[ -z "${f}" || ! -f "${f}" ]]; then
+              echo "缺少签名文件：${f}" >&2
+              exit 1
+            fi
+          done
+          python3 src-tauri/scripts/make_updater_manifest.py "${version}" \
+            "windows-x86_64=${win_sig}:vid2audio-${version}-windows-x64-setup.exe" \
+            "darwin-x86_64=${x64_sig}:vid2audio-${version}-macos-x86_64.app.tar.gz" \
+            "darwin-aarch64=${arm_sig}:vid2audio-${version}-macos-aarch64.app.tar.gz" \
+            > artifacts/latest.json
+          echo "latest.json: $(cat artifacts/latest.json)"
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: "v${{ needs.prepare.outputs.version }}"
+          name: "Vid2Audio v${{ needs.prepare.outputs.version }}"
+          files: |
+            artifacts/windows/*
+            artifacts/macos/*
+            artifacts/latest.json
+          fail_on_unmatched_files: true
+          prerelease: ${{ inputs.prerelease || false }}
+          body: |
+            ## Vid2Audio v${{ needs.prepare.outputs.version }}
+
+            - **版本号**：v${{ needs.prepare.outputs.version }}
+            - **构建时间**：${{ needs.prepare.outputs.build_time }}
+            - **提交**：`${{ needs.prepare.outputs.sha_short }}`（${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }}）
+
+            ### Windows
+            - `vid2audio-${{ needs.prepare.outputs.version }}-windows-x64-setup.exe`
+
+            ### macOS
+            - `vid2audio-${{ needs.prepare.outputs.version }}-macos-aarch64.dmg`（Apple Silicon）
+            - `vid2audio-${{ needs.prepare.outputs.version }}-macos-x86_64.dmg`（Intel）
+            - 未正式签名时，首次打开请在 Finder 中右键 → 打开
+
+            包含：
+            - 完整 Tauri 打包（NSIS / DMG）
+            - 随包 FFmpeg（Windows 为 BtbN LGPL shared；macOS 为 CI 源码编译的 LGPL 静态构建）
+            - 故事机 / 车机 播放优化（FAT 排序）
+            - 跨平台 GUI（Tauri v2 + Rust backend）
+
+            安装包命名规则：`vid2audio-<版本>-<平台>.exe/.dmg`。
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
