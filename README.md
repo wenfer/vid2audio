@@ -1,58 +1,64 @@
 # Vid2Audio
 
-儿童故事机音频资源生产系统。它扫描视频目录，识别合集和集数，调用 FFmpeg 提取音轨，并生成适合 FAT32/NTFS 简单排序规则的前导零文件名。
+把儿童视频合集批量转成**故事机 / 车机 / U 盘**直接能播的音频包。
 
-## 当前实现
+扫描视频目录，自动识别合集与集数，用 FFmpeg 提取所选音轨，输出带前导零序号的安全文件名，并按 FAT 目录项顺序重排——开箱即用，不用在播放器上一集一集翻。
 
-- Rust/Axum 后端与 Vue 3 静态 Web UI
-- 目录扫描、合集识别、标题清理
-- 支持按文件夹或单个视频文件创建音频提取任务
-- 文件管理器支持复制、粘贴、移动、删除、重命名，以及将选中文件/目录打包为 ZIP 下载
-- 文件管理器提供「FAT 排序」，把文件夹内的目录项按自然数字顺序重写，修正故事机 / 车机的播放顺序
-- 分析结果以弹窗展示，可直接复用任务表单创建提取任务
-- ffprobe 音轨解析
-- 音轨选择、10 秒试听、导出音频播放、开头/结尾偏移
-- MP3/M4A/OGG/FLAC/WAV/OPUS 提取接口
-- `000_合集名.mp3` TTS 提示音占位/生成
-- NTFS/FAT 兼容排序、自然排序、前导零适配与排序验证
-- 任务进度、逐文件结果、成功/失败数量和失败原因简报
-- 任务可暂停/继续，进程重启后中断的任务自动转为暂停，不会卡住也不会重复提取
-- 全局最小文件大小、视频后缀白名单和过滤后缀配置
-- SQLite 持久化
-- Docker 与 docker-compose 部署文件
-- Tauri v2 桌面版外壳（优先 Windows），随包分发 LGPL FFmpeg，共用同一套后端与界面
+同一套 Rust/Axum 后端与 Vue 3 界面，提供三种运行形态：**浏览器访问的 NAS/Docker 服务**、**Windows 桌面版**、**macOS 桌面版**。
 
-## 桌面版
+## 特性
 
-桌面版复用完全相同的后端和前端，**不监听任何 TCP 端口**：WebView 的 `v2a://`
-自定义协议直接把请求转发进 Axum router，因此别的程序和网页都碰不到本机的文件接口。
+- **合集识别**：递归扫描、`S01E02` / `第02集` / 独立数字集数解析、季节目录合并
+- **多音轨**：ffprobe 解析全部音轨，按需选择；10 秒试听、开头 / 结尾裁剪
+- **格式**：MP3 / M4A / AAC / OGG / FLAC / WAV / OPUS
+- **故事机排序**：前导零文件名（`000_合集名.mp3`）+ 「FAT 排序」重排目录项物理写入顺序，修正按写入顺序播放的设备错序
+- **文件管理器**：浏览、复制、移动、重命名、删除、ZIP 打包下载
+- **离线 TTS 片头**：Piper 离线生成合集片头；未装 Piper 时自动降级为 1 秒静音占位
+- **任务管理**：逐文件进度、成功/失败简报、暂停 / 继续、重启后断点恢复
+- **安全设计**：桌面版不开 TCP 端口，WebView 请求走自定义 `v2a://` 协议直通后端，别的程序与网页碰不到本机文件接口
 
-界面在桌面版下的额外行为：
+## 运行形态
 
-- 路径输入框旁出现 📂，弹系统文件夹对话框
-- 文件浏览器顶部列出盘符（Windows 上 `C:\` 没有上一级，否则到不了 U 盘所在的盘）
-- 「打包下载」变成系统「另存为」，由后端直接写盘，保存完可在文件管理器中定位
-- 删除、取消任务等确认框走系统原生对话框
+| | 服务端（Docker / NAS） | 桌面版（Windows / macOS） |
+| --- | --- | --- |
+| 界面 | 浏览器访问 `http://host:8000` | 内嵌 WebView |
+| 请求通道 | TCP（默认 `8000`） | `v2a://` 自定义协议，**不开端口** |
+| FFmpeg | 镜像内置 Debian 包 | 随包分发的 LGPL 构建（Windows 下载、macOS 源码编译） |
+| 数据库 | `/app/data/vid2audio.db` | Windows `%LOCALAPPDATA%\vid2audio` / macOS `~/Library/Application Support/vid2audio` |
+| 前端代码 | 完全相同 | 完全相同（差异集中在 `frontend/src/desktop.ts`） |
 
-构建（需要 Windows + MSVC 工具链 + WebView2 运行时）：
+## 下载
+
+安装包发布在 [GitHub Releases](https://github.com/wenfer/vid2audio/releases)：
+
+- `vid2audio-<版本>-windows-x64-setup.exe`（Windows 10/11）
+- `vid2audio-<版本>-macos-aarch64.dmg`（Apple Silicon）与 `-macos-x86_64.dmg`（Intel），最低 macOS 11
+
+桌面版设置页提供「检查更新 / 立即更新」，自动检查并下载安装新版本。未配置 Apple 证书的构建使用 ad-hoc 签名，macOS 首次打开需在 Finder 中右键 → 打开。
+
+## 快速开始
+
+### Docker / NAS
 
 ```bash
-cargo install tauri-cli --version '^2'
-cd src-tauri
-python3 scripts/fetch_ffmpeg.py   # 一次性：下载随包的 LGPL FFmpeg 到 binaries/
-cargo tauri build                 # NSIS 安装包在 target/release/bundle/
+# 先按需调整 docker/docker-compose.yml 中的挂载路径
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-没有 Windows 机器也能出包：推一个 `v*.*.*` tag，或在 GitHub 的 Actions 页手动运行
-`Build Windows desktop installer`，安装包会作为 `vid2audio-windows-nsis` artifact 上传。
-Tauri 在 Linux 上只能走官方称为「最后手段」的 NSIS 交叉编译，所以本机不做这件事。
+打开 `http://localhost:8000`。镜像基于 Debian，内置 `ffmpeg` / `ffprobe`，无需宿主机安装。容器内路径：
 
-## 本地运行
+- 输入视频：`/app/input`（建议只读挂载）
+- 音频输出：`/app/output`
+- 数据与数据库：`/app/data`
+
+### 本地开发
+
+需要本机安装 `ffmpeg` 与 `ffprobe`。
 
 ```bash
 cd frontend
 npm ci
-npm run build
+npm run build          # 产物输出到 backend/static/
 
 cd ../backend
 VID2AUDIO_DB=../data/vid2audio.db \
@@ -63,149 +69,109 @@ cargo run
 
 打开 http://127.0.0.1:8000。
 
-本机直接运行需要安装 `ffmpeg` 和 `ffprobe`。默认 Docker/GHCR 镜像已经内置两者。
+默认同时运行 2 个提取任务，可在「系统配置」调整（1–32），或用 `VID2AUDIO_EXTRACTION_CONCURRENCY` 设置初始值。
 
-默认最多同时运行 2 个音频提取任务，可在“系统配置”中调整，也可以通过 `VID2AUDIO_EXTRACTION_CONCURRENCY` 设置初始值。
+## 典型使用流程
 
-常用检查命令：
+1. **扫描**：在文件浏览器中选择视频文件夹或单个文件，发起扫描。
+2. **分析**：查看合集、集数、音轨列表（分析弹窗可直接复用为提取表单）。
+3. **试听与裁剪**：选择音轨试听 10 秒，设置开头 / 结尾偏移。
+4. **提取**：选择输出格式与排序策略，创建任务并跟踪进度。
+5. **打包**：把输出目录打包下载（桌面版走系统「另存为」）。
+6. **排错**：若故事机仍按写入顺序播放，对该目录执行「FAT 排序」。
 
-```bash
-cd backend
-cargo fmt --check
-cargo test --locked
-cargo clippy --locked --all-targets -- -D warnings
+## 排序与 TTS
 
-cd ../frontend
-npm run build
-```
+系统配置中可选择排序策略：
 
-## Docker 运行
+- **NTFS/FAT 兼容排序**（默认）：面向故事机 / U 盘 / NAS，配合前导零文件名保证播放顺序
+- **自然数字排序**：贴近桌面文件管理器的数字顺序
+- **按名称排序**：大小写折叠后按名称排序
 
-默认镜像基于 `debian:bookworm-slim`，包含 Rust 服务以及 Debian 提供的 `ffmpeg`/`ffprobe`，AMD64 和 ARM64 平台拉取后即可使用，不需要宿主机安装或挂载 FFmpeg。
+片头支持三种模式：
 
-先调整 [docker/docker-compose.yml](docker/docker-compose.yml) 中的路径：
+- **Piper 离线 TTS**（推荐）：完全离线，适合 NAS。需自备 Piper 二进制与中文语音模型（默认 `zh_CN-huayan-medium`）。Docker 中挂载 `/usr/local/bin/piper:/app/bin/piper:ro` 与模型目录到 `/app/data/piper-voices:ro`
+- **静音占位**：生成 1 秒静音片头（Piper 失败时的默认降级策略）
+- **禁用片头**：不生成片头
 
-```yaml
-volumes:
-  - /your/videos:/app/input:ro
-  - /your/output:/app/output
-  - /your/data:/app/data
-```
+## 桌面版架构
 
-然后启动：
+桌面版复用同一份 `build_router`，**不监听任何 TCP 端口**：注册 `v2a://` 自定义 URI scheme，把每个 WebView 请求通过 `Router::oneshot` 直通 Axum router。
 
-```bash
-docker compose -f docker/docker-compose.yml up --build
-```
+- 前端零改动，请求与页面都走同一 scheme，`fetch` / `<audio>` / 下载链接无需特判
+- 不开端口 = 其他程序与网页无法触达 `/api/v1/files/delete` 这类改文件的接口
+- IPC 白名单最小化：`capabilities/default.json` 只放开原生对话框与「在文件管理器中显示」
+- 浏览器与桌面差异集中在 `frontend/src/desktop.ts`（系统文件夹对话框、另存为、原生确认框等）
 
-直接拉取 GHCR 默认镜像：
+## 构建与发布
 
-```bash
-docker run -d --name vid2audio -p 8000:8000 \
-  -v /your/videos:/app/input:ro \
-  -v /your/output:/app/output \
-  -v /your/data:/app/data \
-  ghcr.io/wenfer/vid2audio:latest
-```
+CI（`.github/workflows/desktop-release.yml`）在各平台原生 runner 上构建：
 
-`latest` 是唯一发布标签，内含 `linux/amd64` 和 `linux/arm64` 两个架构变体。Docker 会按宿主机架构自动拉取对应镜像。
+- Windows：NSIS 安装包
+- macOS：arm64 / x86_64 两个 DMG + updater 归档（macOS 的 LGPL FFmpeg 在 CI 从源码编译，按脚本内容缓存，版本不变不会重复编译）
 
-## 排序和 TTS
+推送 `v*.*.*` 标签（必须等于 `src-tauri/tauri.conf.json` 的版本号）即自动构建并发布 GitHub Release；也可以在 Actions 页面手动 dispatch。
 
-系统配置中可以选择文件系统排序策略：
-
-- `NTFS/FAT 兼容排序`: 面向故事机、U 盘、NAS 文件遍历的默认策略，配合前导零文件名保证播放顺序。
-- `自然数字排序`: 更贴近桌面文件管理器的人类数字顺序。
-- `按名称排序`: 只按文件名大小写折叠后排序。
-
-TTS 片头支持多通道配置：
-
-- `Piper 离线 TTS`（推荐）: 完全离线的神经网络 TTS，无需联网，适合 NAS/Docker 环境。需要安装 Piper 二进制和中文语音模型。
-- `静音占位`: 不访问云端，生成 1 秒静音片头。
-- `禁用片头`: 不生成片头文件。
-
-### 安装 Piper TTS（推荐）
+本地打包（可选）：
 
 ```bash
-# 在宿主机安装 Piper
-pip install piper-tts
-
-# 下载中文语音模型
-python3 -m piper.download_voices zh_CN-huayan-medium
-
-# 找到 piper 二进制和模型路径
-which piper
-# 模型通常在 ~/.local/share/piper-voices/ 或 site-packages 内
+cargo install tauri-cli --version '^2'
+cd src-tauri
+python3 scripts/fetch_ffmpeg.py           # Windows：下载 LGPL FFmpeg 到 binaries/
+python3 scripts/build_ffmpeg_macos.py     # macOS：源码编译 LGPL FFmpeg
+cargo tauri build                         # Windows NSIS / macOS .app + dmg
 ```
 
-Docker 中使用 Piper：
-
-```yaml
-volumes:
-  - /usr/local/bin/piper:/app/bin/piper:ro
-  - /path/to/piper-voices:/app/data/piper-voices:ro
-```
-
-如果 TTS 失败，可以选择静音占位、跳过片头或终止任务。
-
-## GHCR 镜像
-
-发布 `vX.Y.Z` Git 标签时，GitHub Actions 会校验它与 Cargo 版本一致，并行构建两个原生架构：
-
-- `linux/amd64`
-- `linux/arm64`
-
-每个版本发布两个可读标签，它们指向同一份多架构 manifest，不会重复构建镜像：
-
-```text
-ghcr.io/wenfer/vid2audio:v0.2.3
-ghcr.io/wenfer/vid2audio:latest
-```
-
-版本规范统一为：Cargo 与前端使用 `X.Y.Z`，Git 和镜像使用 `vX.Y.Z`。版本标签用于固定生产部署，`latest` 指向最新发布；不再生成提交哈希或 `-ffmpeg` 标签。Docker 会根据 x86_64 或 ARM64 宿主机自动选择正确变体。
-
-如果 Actions 在推送阶段报 `permission_denied: write_package`，优先检查仓库设置：
-
-1. 进入 GitHub 仓库 `Settings -> Actions -> General -> Workflow permissions`，选择 `Read and write permissions`。
-2. 如果仓库属于组织，确认组织没有把 Actions 的 package 写入权限禁用。
-3. 如果 `GITHUB_TOKEN` 仍然无法写入 GHCR，创建一个 classic PAT，勾选 `write:packages` 和 `read:packages`；私有仓库还需要 `repo`。然后在仓库 `Settings -> Secrets and variables -> Actions` 中添加：
-   - `GHCR_TOKEN`: PAT 内容
-   - `GHCR_USERNAME`: PAT 所属 GitHub 用户名，可选；不设置时默认使用 Actions 触发者
-4. 如果同名 package 已经存在，进入 package 设置确认此仓库拥有访问权限，或者删除旧 package 后重新发布。
+Docker 镜像由本地 `docker compose up --build` 构建，CI 不再发布镜像。
 
 ## API
 
-Base URL: `/api/v1`
+基础路径：`/api/v1`
 
 ```text
-GET    /files?path=...
-POST   /files/copy
-POST   /files/move
-POST   /files/rename
-POST   /files/delete
-POST   /files/fat-sort
-GET    /files/archive?path=...
-POST   /files/archive-to
+GET    /files?path=...                    文件浏览
+POST   /files/copy|move|rename|delete     文件管理
+POST   /files/fat-sort                    FAT 目录项排序
+GET    /files/archive                     打包下载（浏览器）
+POST   /files/archive-to                  打包写入指定路径（桌面版另存为）
 
-POST   /scan/start
-GET    /collections
-GET    /collections/{id}
-POST   /collections/{id}/scan
-DELETE /collections/{id}
+POST   /scan/start                        发起扫描
+GET    /collections                       合集列表
+GET    /collections/{id}                  合集详情
+POST   /collections/{id}/scan             重新扫描合集
+DELETE /collections/{id}                  删除合集
 
-POST   /extract
-GET    /extract/jobs
-GET    /extract/jobs/{id}
-POST   /extract/jobs/{id}/cancel
-POST   /extract/jobs/{id}/pause
-POST   /extract/jobs/{id}/resume
-DELETE /extract/jobs/{id}
-GET    /extract/jobs/{job_id}/items/{item_id}/audio
-GET    /preview/{video_id}?track=...&duration=...&start=...
+POST   /extract                           创建提取任务
+GET    /extract/jobs                      任务列表
+GET    /extract/jobs/{id}                 任务详情
+DELETE /extract/jobs/{id}                 删除任务
+POST   /extract/jobs/{id}/cancel|pause|resume
+GET    /extract/jobs/{job_id}/items/{item_id}/audio   单文件音频
+GET    /preview/{video_id}?track=...&duration=...&start=...   试听
 
-GET    /settings
+GET    /settings                          系统配置
 PUT    /settings
-GET    /system/status
+GET    /system/status                     运行状态
 ```
 
-实现细节、产品约束和已知缺口见 [docs/PRD-vid2audio.md](docs/PRD-vid2audio.md)。
+音频接口支持 HTTP Range，可拖动播放进度。
+
+## 目录结构
+
+```text
+backend/     Rust + Axum 后端（路由、SQLite、扫描、提取、排序、FFmpeg）
+frontend/    Vue 3 + Vite + TypeScript 界面
+src-tauri/   Tauri v2 桌面外壳（Windows / macOS）与打包脚本
+bridge/      WebView 自定义协议 ↔ Axum router 转发层（不依赖 tauri）
+docker/      Dockerfile 与 docker-compose
+docs/        产品与实现说明（PRD）
+```
+
+## 文档
+
+- [docs/PRD-vid2audio.md](docs/PRD-vid2audio.md)：产品约束、架构与实现细节
+- [AGENTS.md](AGENTS.md)：仓库约定与开发命令
+
+## 许可证
+
+暂未指定开源许可证，保留所有权利。

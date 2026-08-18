@@ -1,9 +1,9 @@
 # Vid2Audio 产品与实现说明
 
-> 当前版本：0.2.3
+> 当前版本：0.2.11
 >
-> 目标平台：Docker、Linux AMD64/ARM64、NAS 设备；Windows 桌面版（Tauri v2）
-> macOS 与 Linux 桌面安装包尚未产出，见第 13 节。
+> 目标平台：Docker/NAS 服务；Windows 与 macOS 桌面版（Tauri v2）
+> Linux 桌面安装包尚未产出，见第 13 节。
 > 本文只描述仓库当前实现和必须保持的产品约束。
 
 ## 1. 产品目标
@@ -23,17 +23,17 @@ Vid2Audio 将视频合集转换为适合儿童故事机、早教机和 U 盘播�
 - 使用 Piper 生成离线合集片头；失败时可静音占位、跳过或终止。
 - 保存合集、全局设置和提取任务，展示逐文件结果。
 - 提取任务可暂停和继续；进程重启后中断的任务不会卡死。
-- 同一套后端与界面同时以 Docker 服务和 Windows 桌面程序发布。
+- 同一套后端与界面同时以 Docker 服务、Windows 与 macOS 桌面程序发布。
 
 ## 2. 两种发布形态
 
-| | 服务端（Docker/NAS） | 桌面版（Windows） |
+| | 服务端（Docker/NAS） | 桌面版（Windows / macOS） |
 | --- | --- | --- |
-| 进程 | `vid2audio` 单进程 | `Vid2Audio.exe`（Tauri 外壳 + 同一份 router） |
-| 界面 | 浏览器访问 `http://host:8000` | 内嵌 WebView2 |
+| 进程 | `vid2audio` 单进程 | `vid2audio-desktop`（Tauri 外壳 + 同一份 router） |
+| 界面 | 浏览器访问 `http://host:8000` | 内嵌 WebView2 / WKWebView |
 | 请求通道 | TCP（默认 `127.0.0.1:8000`） | `v2a://` 自定义 URI scheme，**不开端口** |
-| FFmpeg | 镜像内置 Debian 包 | 随安装包分发的 LGPL 构建 |
-| 数据库 | `/app/data/vid2audio.db` | `%LOCALAPPDATA%\vid2audio\vid2audio.db` |
+| FFmpeg | 镜像内置 Debian 包 | 随包分发 LGPL 构建（Windows 下载 BtbN 构建，macOS 从源码编译） |
+| 数据库 | `/app/data/vid2audio.db` | Windows `%LOCALAPPDATA%\vid2audio\vid2audio.db` / macOS `~/Library/Application Support/vid2audio/vid2audio.db` |
 | 前端代码 | 完全相同 | 完全相同（差异集中在 `src/desktop.ts`） |
 
 两种形态共用 `vid2audio::build_router`，行为不会漂移。
@@ -248,7 +248,7 @@ GET    /system/status
 
 ## 10. 数据与配置
 
-SQLite 默认路径：容器 `/app/data/vid2audio.db`，Windows 桌面版 `%LOCALAPPDATA%\vid2audio\vid2audio.db`。
+SQLite 默认路径：容器 `/app/data/vid2audio.db`，Windows 桌面版 `%LOCALAPPDATA%\vid2audio\vid2audio.db`，macOS 桌面版 `~/Library/Application Support/vid2audio/vid2audio.db`。
 
 数据表：
 
@@ -265,11 +265,11 @@ SQLite 默认路径：容器 `/app/data/vid2audio.db`，Windows 桌面版 `%LOCA
 
 平台相关的默认路径：
 
-| | 容器 | Windows 桌面版 |
-| --- | --- | --- |
-| 数据 | `/app/data` | `%LOCALAPPDATA%\vid2audio` |
-| 扫描 | `/app/input` | `%USERPROFILE%\Videos` |
-| 输出 | `/app/output` | `%USERPROFILE%\Music\Vid2Audio` |
+| | 容器 | Windows 桌面版 | macOS 桌面版 |
+| --- | --- | --- | --- |
+| 数据 | `/app/data` | `%LOCALAPPDATA%\vid2audio` | `~/Library/Application Support/vid2audio` |
+| 扫描 | `/app/input` | `%USERPROFILE%\Videos` | `~/Videos` |
+| 输出 | `/app/output` | `%USERPROFILE%\Music\Vid2Audio` | `~/Music/Vid2Audio` |
 
 环境变量：
 
@@ -293,29 +293,29 @@ RUST_LOG
 2. Rust 构建并 strip release 二进制。
 3. `debian:bookworm-slim` 安装 FFmpeg，复制二进制和静态资源。
 
-默认 GHCR 镜像内置 `ffmpeg` 和 `ffprobe`，不需要挂载宿主机二进制：
+镜像内置 `ffmpeg` 和 `ffprobe`，不需要挂载宿主机二进制。**CI 不再发布镜像**（`docker-ghcr.yml` 已删除，不要用空 `on: []` 加回来——GitHub 会把空触发列表解析成非法的活动工作流）；Docker 镜像用本地构建：
 
-```text
-ghcr.io/wenfer/vid2audio:v0.2.3
-ghcr.io/wenfer/vid2audio:latest
+```bash
+docker compose -f docker/docker-compose.yml up --build
 ```
 
-版本遵循 SemVer：Cargo 与前端为 `X.Y.Z`，Git 标签与镜像标签为 `vX.Y.Z`。发布工作流校验两者一致，并同时更新 `latest`。两个标签指向同一份 `linux/amd64`、`linux/arm64` manifest，不生成提交哈希或 `-ffmpeg` 别名。`bridge/`、`src-tauri/` 与 `frontend/` 的版本号跟随 `backend/Cargo.toml`。
+版本遵循 SemVer：Cargo 与前端为 `X.Y.Z`，Git 标签为 `vX.Y.Z`。桌面发布工作流校验两者一致。`bridge/`、`src-tauri/` 与 `frontend/` 的版本号跟随 `backend/Cargo.toml`。
 
 `backend/` 保持独立 crate 而不是 workspace 成员：`docker/Dockerfile` 单独复制 `backend/Cargo.toml` 和 `backend/Cargo.lock` 做依赖缓存层，加个 workspace 根会破坏这一层。
 
-桌面版打包（Windows + MSVC 工具链 + WebView2 运行时）：
+桌面版打包：
 
 ```bash
 cargo install tauri-cli --version '^2'
 cd src-tauri
-python3 scripts/fetch_ffmpeg.py   # 一次性：下载随包的 LGPL FFmpeg 到 binaries/
-cargo tauri build                 # NSIS 安装包在 target/release/bundle/
+python3 scripts/fetch_ffmpeg.py           # Windows：下载 BtbN 的 LGPL FFmpeg 到 binaries/
+python3 scripts/build_ffmpeg_macos.py     # macOS：从源码编译 LGPL 静态 ffmpeg/ffprobe 到 binaries/
+cargo tauri build                         # Windows NSIS / macOS .app + dmg
 ```
 
-`beforeBuildCommand` 会自动执行前端构建。安装模式是 `currentUser`，不需要管理员权限。
+`beforeBuildCommand` 会自动执行前端构建。Windows 安装模式是 `currentUser`，不需要管理员权限。
 
-没有 Windows 机器时走 CI：`.github/workflows/desktop-release.yml` 在各自的原生 runner 上构建 Windows NSIS 安装包和 macOS 两个架构的 DMG，`v*.*.*` tag 或手动 dispatch 触发，产物作为 artifact 上传后统一发布为 GitHub Release。Tauri 在 Linux 上只支持被官方称为「最后手段」的 NSIS 交叉编译（MSI 需要 WiX，只能在 Windows 运行），所以不在开发机上做这件事。
+没有对应平台机器时走 CI：`.github/workflows/desktop-release.yml` 在各自的原生 runner 上构建 Windows NSIS 安装包和 macOS 两个架构的 DMG，`v*.*.*` tag 或手动 dispatch 触发，产物作为 artifact 上传后统一发布为 GitHub Release（含各平台 `.sig` 合并的 updater `latest.json`）。macOS 的 FFmpeg 源码编译产物按脚本内容缓存，版本与脚本不变时不重复编译。Tauri 在 Linux 上只支持被官方称为「最后手段」的 NSIS 交叉编译（MSI 需要 WiX，只能在 Windows 运行），所以不在开发机上做这件事。
 
 ## 12. 必须保持的质量约束
 
@@ -375,7 +375,7 @@ cd frontend && npm run build
 - 单个视频按章节自动拆分。
 - 块设备级 `fatsort`（需要特权容器）；FAT 排序只做同盘重命名。
 - FAT 排序递归处理子目录，只处理所选目录的直接子项。
-- macOS 与 Linux 桌面安装包。外壳代码已经按平台分支写好（`bridge::entry_url` 覆盖两种 scheme 形态），但尚未在这两个平台上构建和验证过。
+- Linux 桌面安装包。外壳代码已经按平台分支写好（`bridge::entry_url` 覆盖两种 scheme 形态），但尚未在 Linux 上构建和验证过。
 - 桌面版的进度推送。任务进度仍靠前端轮询 `GET /extract/jobs`，没有走 Tauri Channel。
 - 桌面版尚未收紧 `tauri.conf.json` 的 `security.csp`（当前为 `null`）。
-- Windows 安装包尚未在真机上完成构建与手工验证：音频试听拖动、另存为打包、文件夹选择、盘符入口、重命名/移动对话框都只经过代码审查和交叉类型检查。
+- Windows 安装包尚未在真机上完成手工验证：音频试听拖动、另存为打包、文件夹选择、盘符入口、重命名/移动对话框都只经过代码审查和交叉类型检查。macOS 版已在真机（Apple Silicon）上验证启动与数据落位。
